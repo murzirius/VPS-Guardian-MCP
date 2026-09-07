@@ -1,118 +1,119 @@
 # VPS-Guardian-MCP 🛡️
 
-A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server written in Python. It empowers AI agents (Claude Desktop, Antigravity, Cursor, etc.) to safely monitor Linux VPS health metrics, inspect Docker container states, retrieve service logs, and execute isolated recovery commands without giving full shell or root access.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
+[![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%202024--11--05-green.svg)](https://modelcontextprotocol.io/)
+[![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
+[![Tools Count](https://img.shields.io/badge/Tools-9%20Active-brightgreen.svg)](#-available-mcp-tools)
+
+A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server written in Python. It empowers AI agents (Antigravity, Claude Desktop, Cursor) to safely monitor Linux VPS health, manage Docker containers, inspect systemd logs, and perform isolated recovery operations without raw shell or root risks.
 
 ---
 
-## ✨ Features
+## 📊 Project Statistics & Status
 
-- **📊 Comprehensive System Monitoring (`get_system_health`)**:
-  - Real-time CPU load (%), physical & logical core count, and system load averages.
-  - RAM & Swap usage (used/free/available both in human-readable and raw bytes).
-  - Root disk filesystem capacity and utilization.
-  - Docker container health check: detects exited, dead, restarting, or unhealthy containers.
-
-- **📜 Safe Service Log Inspection (`read_service_logs`)**:
-  - Reads the last $N$ lines of logs for systemd units and Nginx.
-  - Supports container-specific logs (`docker:<container_name>`).
-  - **Injection Prevention**: Input validation with strict regex patterns and non-shell execution (`shell=False`).
-
-- **🔧 Isolated Emergency Recovery (`execute_recovery`)**:
-  - Strict whitelist-only execution policy.
-  - `clean_docker_cache`: Cleans stopped containers, unused networks, and dangling images.
-  - `restart_nginx`: Restarts the Nginx web server service via systemctl or Docker.
-  - Rejects any unauthorized action with a `forbidden` status.
-
-- **🛡️ Robust Error Handling & Permissions**:
-  - All operations wrapped in safe exception boundaries.
-  - Clear, informative diagnostic messages for permission issues (e.g. missing access to `/var/run/docker.sock` or sudo privileges) without crashing the MCP connection.
+| Metric | Status / Value |
+| :--- | :--- |
+| **Current Version** | `0.1.0` (Milestone 2 Completed) |
+| **Active MCP Tools** | **9 tools** (System, Processes, Services, Logs, Docker, Recovery) |
+| **Supported OS** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch) |
+| **Client Support** | Google Antigravity, Claude Desktop, Cursor, Zed, Any MCP Client |
+| **Security Standard** | 100% Shell-less execution (`shell=False`), strict regex input whitelisting |
+| **Transport** | Stdio (Local & SSH tunnel-ready) |
 
 ---
 
-## 📁 Project Structure
+## ✨ Features by Category
+
+### 1. 🖥️ System & Resource Monitoring (`src/monitor.py`)
+- **`get_system_health`**: Complete system snapshot (per-core CPU %, RAM/Swap bytes and %, root disk usage, Disk I/O read/write, Network I/O, humanized uptime).
+- **`get_top_processes`**: Live ranking of top resource-consuming processes sorted by CPU or Memory (PID, user, RSS memory, command).
+- **`check_service_status`**: Real-time status of systemd units (`nginx`, `mysql`, `postgresql`, `ufw`).
+- **`get_failed_systemd_units`**: Rapid audit of degraded or failed system services (`systemctl --failed`).
+- **`read_service_logs`**: Safe service log retrieval with pure Python-level keyword/regex filtering (`grep_filter`), immune to command injection.
+
+### 2. 🐳 Docker Management (`src/docker_manager.py`) [NEW in Chunk 2]
+- **`list_docker_containers`**: Detailed container inspection with port bindings, volumes/mounts, health status, and exit codes.
+- **`get_docker_container_logs`**: Safe tailing of container stdout/stderr logs.
+- **`get_docker_stats`**: Real-time resource metrics for running containers (CPU %, Memory used/limit/%, Network I/O, Block I/O).
+
+### 3. 🔧 Isolated Recovery (`src/recover.py`)
+- **`execute_recovery`**: Strict whitelist-only execution (`clean_docker_cache`, `restart_nginx`). Rejects unauthorized actions.
+
+---
+
+## 🤖 Guidelines for AI Agents (Правила для ИИ-агентов)
+
+> [!IMPORTANT]
+> **Для всех взаимодействующих ИИ-агентов:**
+> 1. **Используйте ТОЛЬКО нативные вызовы MCP-инструментов**: Всегда вызывайте системные инструменты через `call_mcp_tool` (или стандартный JSON-RPC диспетчер).
+> 2. **Никаких выдуманных данных**: Запрещено гадать или имитировать состояние сервера. Если инструмент вернул ошибку прав или статус службы, сообщайте пользователю точный JSON-ответ.
+> 3. **Принцип наименьших привилегий**: Для диагностики используйте инструменты чтения (`get_system_health`, `get_top_processes`, `list_docker_containers`). Реанимационные действия (`execute_recovery`) применяйте строго с подтверждения пользователя.
+
+---
+
+## 📁 Project Architecture
 
 ```text
 vps-guardian-mcp/
 ├── src/
-│   ├── __init__.py        # Package initialization
-│   ├── server.py          # FastMCP server & tool definitions
-│   ├── monitor.py         # System & Docker metrics collector
-│   └── recover.py         # Whitelisted recovery & log inspection
-├── pyproject.toml         # Package definition and dependencies
-├── LICENSE                # MIT License
-├── .gitignore             # Git exclusion rules
-└── README.md              # Documentation
+│   ├── __init__.py          # Package initialization
+│   ├── server.py            # FastMCP server & 9 registered tools
+│   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
+│   ├── docker_manager.py    # Container inspection, logs, and live stats
+│   └── recover.py           # Whitelisted recovery & emergency actions
+├── pyproject.toml           # Package metadata, pinned dependencies (<2.0.0)
+├── LICENSE                  # MIT License (2026, murzirius)
+├── .gitignore               # Ignored environments and caches
+└── README.md                # Documentation and project stats
 ```
 
 ---
 
-## 🚀 Installation & Setup
+## 🚀 Installation & VPS Setup
 
-### 1. Requirements
-- Python 3.10+
-- Linux VPS (Ubuntu/Debian/CentOS/Fedora) with systemd and Docker (optional)
-
-### 2. Install dependencies
-
-Create a virtual environment and install the package:
+### 1. Clone & Install on your VPS
 
 ```bash
-git clone https://github.com/murzirius/VPS-Guardian-MCP.git
-cd vps-guardian-mcp
+git clone https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+cd /opt/vps-guardian-mcp
 
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
 
-### 3. Grant Required VPS Permissions (Optional but Recommended)
-
-To allow the server to inspect Docker and restart Nginx without full root:
+### 2. Permissions (No Root Required)
 
 ```bash
-# Allow Docker socket access without sudo
+# Allow reading Docker without root
 sudo usermod -aG docker $USER
 
-# Allow reading systemd logs
+# Allow reading system logs
 sudo usermod -aG systemd-journal $USER
-
-# Allow passwordless Nginx restart via sudoers (optional for restart_nginx)
-echo "$USER ALL=(ALL) NOPASSWD: /bin/systemctl restart nginx" | sudo tee /etc/sudoers.d/vps-guardian-nginx
-sudo chmod 0440 /etc/sudoers.d/vps-guardian-nginx
 ```
 
 ---
 
-## ⚙️ MCP Client Configuration
+## ⚙️ Antigravity & Claude Desktop Configuration
 
-Add `VPS-Guardian-MCP` to your client configuration file (e.g. `claude_desktop_config.json` or Antigravity MCP settings):
-
-```json
-{
-  "mcpServers": {
-    "vps-guardian": {
-      "command": "/path/to/vps-guardian-mcp/.venv/bin/python",
-      "args": [
-        "-m",
-        "src.server"
-      ]
-    }
-  }
-}
-```
-
-Or when running via `uvx` / `pipx`:
+Add `VPS-Guardian-MCP` to your `~/.gemini/config/mcp_config.json` (for Antigravity) or `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "vps-guardian": {
-      "command": "uv",
+      "command": "ssh",
       "args": [
-        "--directory",
-        "/path/to/vps-guardian-mcp",
-        "run",
-        "vps-guardian-mcp"
+        "-q",
+        "-i",
+        "C:/Users/Михаил/.ssh/id_ed25519",
+        "-o",
+        "LogLevel=ERROR",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "root@65.75.200.108",
+        "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp"
       ]
     }
   }
@@ -121,70 +122,22 @@ Or when running via `uvx` / `pipx`:
 
 ---
 
-## 🛠️ Available MCP Tools
+## 🛠️ Complete Tools Reference
 
-### 1. `get_system_health`
-Retrieves CPU, RAM, root disk usage, and unhealthy/failed Docker containers.
-
-**Example Agent Output:**
-```json
-{
-  "system": { "os": "Linux", "platform": "Linux-5.15.0-generic-x86_64", "architecture": "x86_64" },
-  "cpu": { "status": "ok", "cpu_usage_percent": 18.4, "logical_cores": 4 },
-  "memory": {
-    "status": "ok",
-    "ram": { "total": "15.62 GB", "used": "4.20 GB", "available": "11.42 GB", "used_percent": 26.9 }
-  },
-  "disk": {
-    "status": "ok",
-    "mount_point": "/",
-    "total": "98.24 GB",
-    "free": "64.12 GB",
-    "used_percent": 34.7
-  },
-  "docker": {
-    "status": "connected",
-    "total_containers": 5,
-    "running_containers": 4,
-    "failed_containers": [
-      {
-        "id": "a1b2c3d4e5f6",
-        "name": "payment-api",
-        "status": "exited",
-        "exit_code": 137,
-        "error": "OOMKilled"
-      }
-    ]
-  }
-}
-```
-
-### 2. `read_service_logs`
-Fetches the last $N$ lines of logs for Nginx, systemd services, or Docker containers.
-
-**Parameters:**
-- `service_name` (string, required): e.g. `"nginx"`, `"docker:payment-api"`, or `"systemd:redis"`.
-- `lines_count` (integer, optional, default: 50): clamped between 1 and 1000.
-
-### 3. `execute_recovery`
-Executes an isolated, predefined recovery operation.
-
-**Parameters:**
-- `action_name` (string, required):
-  - `"clean_docker_cache"`: Runs Docker prune for containers, images, and networks.
-  - `"restart_nginx"`: Safely restarts Nginx via systemctl or Docker.
-
----
-
-## 🔒 Security Principles
-
-1. **No Arbitrary Command Execution**: We deliberately avoid exposing a raw terminal or generic `exec` tool.
-2. **Strict Whitelisting**: Actions are hard-coded in an immutable lookup table.
-3. **No Shell Invocations**: All subprocess executions use explicit list arguments (`shell=False`), preventing shell meta-character evaluation and command injections.
-4. **Least Privilege**: Designed to run as an unprivileged user with narrowly scoped group memberships (`docker`, `systemd-journal`).
+| Tool Name | Parameters | Description |
+| :--- | :--- | :--- |
+| `get_system_health` | none | Full CPU (per core), RAM, Disk I/O, Network I/O, Uptime |
+| `get_top_processes` | `sort_by` ('cpu'/'memory'), `limit` (int) | Top resource-consuming processes |
+| `check_service_status` | `service_name` (str) | Systemd unit status (`active`, `enabled`, logs) |
+| `get_failed_systemd_units`| none | List all degraded or failed systemd units |
+| `read_service_logs` | `service_name` (str), `lines_count` (int), `grep_filter` (str) | Safe service logs with Python keyword filtering |
+| `list_docker_containers` | `all` (bool, default True) | List containers with ports, volumes, and health |
+| `get_docker_container_logs` | `container_name` (str), `lines_count` (int) | Tail stdout/stderr for a container |
+| `get_docker_stats` | none | Live CPU %, Memory %, Network & Block I/O per container |
+| `execute_recovery` | `action_name` (str) | Whitelisted actions: `clean_docker_cache`, `restart_nginx` |
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - Copyright (c) 2026 murzirius. See [LICENSE](LICENSE) for details.

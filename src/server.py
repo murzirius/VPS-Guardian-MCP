@@ -5,7 +5,8 @@ Exposes safe, isolated tools for:
 - Process tracking: Top CPU/Memory consuming processes.
 - Service management: Systemd service health checks, failed units inspector.
 - Service logs: Safe log inspection with Python-level grep filtering.
-- Whitelisted emergency recovery actions.
+- Docker management: List containers, inspect container logs, live resource statistics.
+- Emergency recovery: Whitelisted recovery actions.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ logger = logging.getLogger("vps_guardian.server")
 try:
     from mcp.server.fastmcp import FastMCP
 except ImportError:
-    logger.error("The 'mcp' library is required. Run: pip install 'mcp>=1.0.0'")
+    logger.error("The 'mcp' library is required. Run: pip install 'mcp<2.0.0,>=1.0.0'")
     raise
 
 # Internal imports with fallback
@@ -38,6 +39,11 @@ try:
         get_top_processes as _get_top_processes,
         read_service_logs as _read_service_logs,
     )
+    from src.docker_manager import (
+        get_docker_container_logs as _get_docker_container_logs,
+        get_docker_stats as _get_docker_stats,
+        list_docker_containers as _list_docker_containers,
+    )
     from src.recover import run_recovery_action as _run_recovery_action
 except ImportError:
     from monitor import (
@@ -47,6 +53,11 @@ except ImportError:
         get_top_processes as _get_top_processes,
         read_service_logs as _read_service_logs,
     )
+    from docker_manager import (
+        get_docker_container_logs as _get_docker_container_logs,
+        get_docker_stats as _get_docker_stats,
+        list_docker_containers as _list_docker_containers,
+    )
     from recover import run_recovery_action as _run_recovery_action
 
 # Initialize FastMCP Server
@@ -55,6 +66,10 @@ mcp = FastMCP(
     dependencies=["psutil", "docker"],
 )
 
+
+# ============================================================================
+# 1. System & Service Monitoring Tools
+# ============================================================================
 
 @mcp.tool()
 def get_system_health() -> str:
@@ -154,6 +169,68 @@ def read_service_logs(
         logger.error(f"Error in read_service_logs: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
 
+
+# ============================================================================
+# 2. Docker Management Tools
+# ============================================================================
+
+@mcp.tool()
+def list_docker_containers(all: bool = True) -> str:
+    """List Docker containers with their status, image, port bindings, volumes, and health.
+
+    Args:
+        all: Set to True to list all containers (running and stopped), False for running only.
+
+    Returns:
+        JSON string with list of containers, port forwards, and mount mappings.
+    """
+    try:
+        data = _list_docker_containers(all=all)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in list_docker_containers: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def get_docker_container_logs(container_name: str, lines_count: int = 50) -> str:
+    """Safely read stdout/stderr logs from a specific Docker container.
+
+    Args:
+        container_name: Container name or container short/full ID.
+        lines_count: Number of recent log lines to retrieve (default: 50, max: 1000).
+
+    Returns:
+        JSON string containing the container logs.
+    """
+    try:
+        data = _get_docker_container_logs(container_name=container_name, lines_count=lines_count)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in get_docker_container_logs: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def get_docker_stats() -> str:
+    """Retrieve live resource utilization metrics for all running Docker containers.
+
+    Provides real-time CPU %, Memory %, Network I/O, and Block I/O (equivalent to `docker stats`).
+
+    Returns:
+        JSON string listing resource metrics per running container.
+    """
+    try:
+        data = _get_docker_stats()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in get_docker_stats: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 3. Emergency Recovery Tools
+# ============================================================================
 
 @mcp.tool()
 def execute_recovery(action_name: str) -> str:
