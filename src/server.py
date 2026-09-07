@@ -7,6 +7,7 @@ Exposes safe, isolated tools for:
 - Service logs: Safe log inspection with Python-level grep filtering.
 - Docker management: List containers, inspect container logs, live resource statistics.
 - Network & firewall: Discover open/listening ports and audit UFW firewall rules.
+- File & config management: Whitelisted file viewing, atomic writing with backups, directory inspection.
 - Emergency recovery: Whitelisted recovery actions.
 """
 
@@ -45,6 +46,11 @@ try:
         get_docker_stats as _get_docker_stats,
         list_docker_containers as _list_docker_containers,
     )
+    from src.files import (
+        list_directory as _list_directory,
+        view_file_content as _view_file_content,
+        write_file_content as _write_file_content,
+    )
     from src.network import (
         get_open_ports as _get_open_ports,
         get_ufw_status as _get_ufw_status,
@@ -62,6 +68,11 @@ except ImportError:
         get_docker_container_logs as _get_docker_container_logs,
         get_docker_stats as _get_docker_stats,
         list_docker_containers as _list_docker_containers,
+    )
+    from files import (
+        list_directory as _list_directory,
+        view_file_content as _view_file_content,
+        write_file_content as _write_file_content,
     )
     from network import (
         get_open_ports as _get_open_ports,
@@ -274,7 +285,77 @@ def get_ufw_status() -> str:
 
 
 # ============================================================================
-# 4. Emergency Recovery Tools
+# 4. File & Configuration Management Tools
+# ============================================================================
+
+@mcp.tool()
+def view_file_content(file_path: str, max_bytes: int = 50000) -> str:
+    """Safely read the content of an authorized configuration or web file.
+
+    Permitted directories: /etc/nginx/, /etc/mysql/, /etc/postgresql/, /etc/docker/, /etc/caddy/, /var/www/
+    Strictly protected against path traversal attacks.
+
+    Args:
+        file_path: Canonical path or relative path to the configuration file.
+        max_bytes: Maximum bytes to return (default: 50,000, capped at 200,000).
+
+    Returns:
+        JSON string with file content, size, and modification timestamp.
+    """
+    try:
+        data = _view_file_content(file_path=file_path, max_bytes=max_bytes)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in view_file_content: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def write_file_content(file_path: str, content: str, backup: bool = True) -> str:
+    """Atomically write or update a configuration file within authorized directories.
+
+    Creates an automatic timestamped backup (.bak.<timestamp>) before overwriting.
+    Permitted directories: /etc/nginx/, /etc/mysql/, /etc/postgresql/, /etc/docker/, /etc/caddy/, /var/www/
+
+    Args:
+        file_path: Path to the target configuration file.
+        content: Text content to write.
+        backup: Create a backup file before writing (default: True).
+
+    Returns:
+        JSON string indicating write status and backup location.
+    """
+    try:
+        data = _write_file_content(file_path=file_path, content=content, backup=backup)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in write_file_content: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def list_directory(dir_path: str, max_depth: int = 1) -> str:
+    """Inspect file and directory structures within authorized administrative paths.
+
+    Permitted directories: /etc/nginx/, /etc/mysql/, /etc/postgresql/, /etc/docker/, /etc/caddy/, /var/www/
+
+    Args:
+        dir_path: Path to the directory to inspect.
+        max_depth: Exploration depth (1 to 3, default: 1).
+
+    Returns:
+        JSON string with item list (names, types, sizes, modification dates).
+    """
+    try:
+        data = _list_directory(dir_path=dir_path, max_depth=max_depth)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in list_directory: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 5. Emergency Recovery Tools
 # ============================================================================
 
 @mcp.tool()

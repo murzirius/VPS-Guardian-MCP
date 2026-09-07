@@ -4,10 +4,10 @@
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%202024--11--05-green.svg)](https://modelcontextprotocol.io/)
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
-[![Tools Count](https://img.shields.io/badge/Tools-11%20Active-brightgreen.svg)](#-tools-reference)
+[![Tools Count](https://img.shields.io/badge/Tools-14%20Active-brightgreen.svg)](#-tools-reference)
 [![Updates](https://img.shields.io/badge/Changelog-UPDATES.md-informational.svg)](UPDATES.md)
 
-A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, network security audits, and isolated emergency recovery.
+A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, and isolated emergency recovery.
 
 It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structured, programmatic tools to inspect server health and resolve infrastructure issues without raw shell access or unconstrained root privileges.
 
@@ -17,11 +17,11 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.3.0` (See [UPDATES.md](UPDATES.md)) |
-| **Active MCP Tools** | **11 tools** |
+| **Version** | `0.4.0` (See [UPDATES.md](UPDATES.md)) |
+| **Active MCP Tools** | **14 tools** |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch Linux) |
-| **Security Standards** | 100% Shell-less execution (`shell=False`), strict regex whitelisting, atomic operations |
+| **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
 | **Compatible Clients** | Google Antigravity, Anthropic Claude Desktop, Cursor IDE, Zed, any MCP client |
 
 ---
@@ -44,7 +44,12 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 - **`get_open_ports`**: Discovers all open and listening network ports (TCP and UDP, IPv4 and IPv6) with corresponding bound processes and PIDs.
 - **`get_ufw_status`**: Audits Uncomplicated Firewall (UFW) active status, default incoming/outgoing policies, and detailed rule configurations.
 
-### 4. 🔧 Isolated Recovery (`src/recover.py`)
+### 4. 📁 File & Configuration Management (`src/files.py`)
+- **`view_file_content`**: Safely reads configuration files within authorized administrative paths (`/etc/nginx/`, `/etc/mysql/`, `/etc/postgresql/`, `/etc/docker/`, `/etc/caddy/`, `/var/www/`) with context-protective size bounds.
+- **`write_file_content`**: Atomically updates configuration files via temporary file staging, preserving original permissions and automatically generating timestamped backup copies (`.bak.<timestamp>`).
+- **`list_directory`**: Explores directory structures up to configurable depth limits within permitted paths.
+
+### 5. 🔧 Isolated Recovery (`src/recover.py`)
 - **`execute_recovery`**: Enforces strict whitelist-only recovery actions (`clean_docker_cache`, `restart_nginx`), rejecting any unauthorized commands with explicit access errors.
 
 ---
@@ -53,10 +58,10 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 
 When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the following operational standards:
 
-1. **Invoke Native MCP Tools Exclusively**: Never simulate or guess server states. Always call the corresponding tool (`get_system_health`, `list_docker_containers`, `get_open_ports`, etc.) to obtain verified ground-truth telemetry.
+1. **Invoke Native MCP Tools Exclusively**: Never simulate or guess server states. Always call the corresponding tool (`get_system_health`, `list_docker_containers`, `view_file_content`, etc.) to obtain verified ground-truth telemetry.
 2. **Follow the Principle of Least Privilege**: Use read-only diagnostic tools first before suggesting or applying changes.
 3. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
-4. **Require Confirmation for State-Changing Operations**: Any recovery or modification action (`execute_recovery`) must be explicitly confirmed with the operator prior to execution.
+4. **Require Confirmation for State-Changing Operations**: Any recovery or file modification action (`execute_recovery`, `write_file_content`) must be explicitly confirmed with the operator prior to execution.
 
 ---
 
@@ -66,10 +71,11 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 VPS-Guardian-MCP/
 ├── src/
 │   ├── __init__.py          # Package initialization
-│   ├── server.py            # FastMCP server and tool registry (11 tools)
+│   ├── server.py            # FastMCP server and tool registry (14 tools)
 │   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
 │   ├── docker_manager.py    # Container inventory, logs, and live telemetry
 │   ├── network.py           # Listening ports, bound processes, and UFW rules
+│   ├── files.py             # Whitelisted config viewer, atomic writer, directory inspector
 │   └── recover.py           # Whitelisted recovery and emergency actions
 ├── pyproject.toml           # Package configuration and dependencies
 ├── LICENSE                  # MIT License (2026, murzirius)
@@ -150,6 +156,9 @@ Configure your MCP client (Antigravity `mcp_config.json` or Claude Desktop `clau
 | `get_docker_stats` | *none* | Live telemetry for running containers (CPU %, RAM, Network and Block I/O) |
 | `get_open_ports` | *none* | Discovers all listening ports (TCP/UDP, IPv4/IPv6) with process names and PIDs |
 | `get_ufw_status` | *none* | Audits UFW firewall state, default traffic policies, and active rules |
+| `view_file_content` | `file_path` (*string*), `max_bytes` (*int*) | Reads authorized configuration files with size bounding |
+| `write_file_content` | `file_path` (*string*), `content` (*string*), `backup` (*bool*) | Atomically updates config files with automated `.bak` backups |
+| `list_directory` | `dir_path` (*string*), `max_depth` (*int*) | Lists directory contents within authorized paths |
 | `execute_recovery` | `action_name` (*string*) | Executes whitelisted recovery operations (`clean_docker_cache`, `restart_nginx`) |
 
 ---
@@ -158,8 +167,10 @@ Configure your MCP client (Antigravity `mcp_config.json` or Claude Desktop `clau
 
 1. **No Shell Invocations**: Subprocess executions consistently use explicit argument arrays (`shell=False`) to prevent command injection.
 2. **Strict Parameter Validation**: Service identifiers, container names, and filters are validated against restrictive regex patterns.
-3. **Immutable Whitelists**: Execution actions are governed by fixed lookup tables.
-4. **Graceful Permission Degradation**: Missing capabilities (e.g. unprivileged Docker socket or lack of sudo) return descriptive diagnostic payloads rather than crashing the protocol stream.
+3. **Directory Path Whitelisting**: File operations are strictly locked down to `/etc/nginx/`, `/etc/mysql/`, `/etc/postgresql/`, `/etc/docker/`, `/etc/caddy/`, and `/var/www/`. Path traversal (`../`) is blocked at canonical resolution.
+4. **Atomic File Modifications**: File writing stages changes via temporary files before atomic replacement to prevent file corruption.
+5. **Immutable Whitelists**: Execution actions are governed by fixed lookup tables.
+6. **Graceful Permission Degradation**: Missing capabilities return descriptive diagnostic payloads rather than crashing the protocol stream.
 
 ---
 

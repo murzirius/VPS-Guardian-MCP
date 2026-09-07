@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.4.0] - 2026-09-07
+
+### Added
+- **File & Configuration Management Suite (`src/files.py`)**:
+  - `view_file_content`: Bounded text extraction for system configuration files in whitelisted administrative paths (`/etc/nginx/`, `/etc/mysql/`, `/etc/postgresql/`, `/etc/docker/`, `/etc/caddy/`, `/var/www/`).
+  - `write_file_content`: Atomic configuration file updating via temporary file swap and automated timestamped `.bak.<timestamp>` backup generation.
+  - `list_directory`: Safe directory tree exploration up to configurable depth limits inside authorized paths.
+  - Security validation preventing directory traversal (`../`), relative path escapes, and unauthorized symlink attacks.
+- Registered file tools in `src/server.py` bringing total tool inventory to **14 active MCP tools**.
+
+---
+
 ## [0.3.0] - 2026-09-07
 
 ### Added
