@@ -4,75 +4,80 @@
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%202024--11--05-green.svg)](https://modelcontextprotocol.io/)
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
-[![Tools Count](https://img.shields.io/badge/Tools-9%20Active-brightgreen.svg)](#-available-mcp-tools)
+[![Tools Count](https://img.shields.io/badge/Tools-9%20Active-brightgreen.svg)](#-tools-reference)
 
-A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server written in Python. It empowers AI agents (Antigravity, Claude Desktop, Cursor) to safely monitor Linux VPS health, manage Docker containers, inspect systemd logs, and perform isolated recovery operations without raw shell or root risks.
+A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, system diagnostics, and isolated emergency recovery.
+
+It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structured, programmatic tools to inspect server health and resolve infrastructure issues without raw shell access or unconstrained root privileges.
 
 ---
 
-## 📊 Project Statistics & Status
+## 📊 Project Overview & Statistics
 
-| Metric | Status / Value |
+| Metric | Details |
 | :--- | :--- |
-| **Current Version** | `0.1.0` (Milestone 2 Completed) |
-| **Active MCP Tools** | **9 tools** (System, Processes, Services, Logs, Docker, Recovery) |
-| **Supported OS** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch) |
-| **Client Support** | Google Antigravity, Claude Desktop, Cursor, Zed, Any MCP Client |
-| **Security Standard** | 100% Shell-less execution (`shell=False`), strict regex input whitelisting |
-| **Transport** | Stdio (Local & SSH tunnel-ready) |
+| **Version** | `0.1.0` |
+| **Active MCP Tools** | **9 tools** |
+| **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
+| **Supported Platforms** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch Linux) |
+| **Security Standards** | 100% Shell-less execution (`shell=False`), strict regex whitelisting, atomic operations |
+| **Compatible Clients** | Google Antigravity, Anthropic Claude Desktop, Cursor IDE, Zed, any MCP client |
 
 ---
 
-## ✨ Features by Category
+## ✨ Core Features
 
 ### 1. 🖥️ System & Resource Monitoring (`src/monitor.py`)
-- **`get_system_health`**: Complete system snapshot (per-core CPU %, RAM/Swap bytes and %, root disk usage, Disk I/O read/write, Network I/O, humanized uptime).
-- **`get_top_processes`**: Live ranking of top resource-consuming processes sorted by CPU or Memory (PID, user, RSS memory, command).
-- **`check_service_status`**: Real-time status of systemd units (`nginx`, `mysql`, `postgresql`, `ufw`).
-- **`get_failed_systemd_units`**: Rapid audit of degraded or failed system services (`systemctl --failed`).
-- **`read_service_logs`**: Safe service log retrieval with pure Python-level keyword/regex filtering (`grep_filter`), immune to command injection.
+- **`get_system_health`**: Collects a comprehensive system snapshot including per-core CPU utilization, RAM and Swap metrics, root filesystem capacity, Disk I/O counters (read/write operations and throughput), Network I/O metrics, and humanized uptime.
+- **`get_top_processes`**: Identifies top resource-consuming processes ranked by CPU or memory usage, detailing PID, user, memory RSS, status, and command line summaries.
+- **`check_service_status`**: Queries systemd service state (`active`, `enabled`, recent unit logs) for critical services like Nginx, MySQL, PostgreSQL, and UFW.
+- **`get_failed_systemd_units`**: Performs rapid system audits to discover degraded or failed systemd units (`systemctl --failed`).
+- **`read_service_logs`**: Extracts service logs with pure Python-level keyword/regex filtering (`grep_filter`), eliminating command injection vectors.
 
-### 2. 🐳 Docker Management (`src/docker_manager.py`) [NEW in Chunk 2]
-- **`list_docker_containers`**: Detailed container inspection with port bindings, volumes/mounts, health status, and exit codes.
-- **`get_docker_container_logs`**: Safe tailing of container stdout/stderr logs.
-- **`get_docker_stats`**: Real-time resource metrics for running containers (CPU %, Memory used/limit/%, Network I/O, Block I/O).
+### 2. 🐳 Docker Management (`src/docker_manager.py`)
+- **`list_docker_containers`**: Inspects container inventory, reporting status, image tags, port forwards, bind mounts/volumes, health checks, and exit codes.
+- **`get_docker_container_logs`**: Safely retrieves stdout and stderr streams for any container with bounded line limits.
+- **`get_docker_stats`**: Streams live resource telemetry (CPU %, memory usage and limits, network RX/TX, block I/O) equivalent to `docker stats`.
 
 ### 3. 🔧 Isolated Recovery (`src/recover.py`)
-- **`execute_recovery`**: Strict whitelist-only execution (`clean_docker_cache`, `restart_nginx`). Rejects unauthorized actions.
+- **`execute_recovery`**: Enforces strict whitelist-only recovery actions (`clean_docker_cache`, `restart_nginx`), rejecting any unauthorized commands with explicit access errors.
 
 ---
 
-## 🤖 Guidelines for AI Agents (Правила для ИИ-агентов)
+## 🤖 Guidelines for AI Agents
 
-> [!IMPORTANT]
-> **Для всех взаимодействующих ИИ-агентов:**
-> 1. **Используйте ТОЛЬКО нативные вызовы MCP-инструментов**: Всегда вызывайте системные инструменты через `call_mcp_tool` (или стандартный JSON-RPC диспетчер).
-> 2. **Никаких выдуманных данных**: Запрещено гадать или имитировать состояние сервера. Если инструмент вернул ошибку прав или статус службы, сообщайте пользователю точный JSON-ответ.
-> 3. **Принцип наименьших привилегий**: Для диагностики используйте инструменты чтения (`get_system_health`, `get_top_processes`, `list_docker_containers`). Реанимационные действия (`execute_recovery`) применяйте строго с подтверждения пользователя.
+When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the following operational standards:
+
+1. **Invoke Native MCP Tools Exclusively**: Never simulate or guess server states. Always call the corresponding tool (`get_system_health`, `list_docker_containers`, etc.) to obtain verified ground-truth telemetry.
+2. **Follow the Principle of Least Privilege**: Use read-only diagnostic tools first before suggesting or applying changes.
+3. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
+4. **Require Confirmation for State-Changing Operations**: Any recovery or modification action (`execute_recovery`) must be explicitly confirmed with the operator prior to execution.
 
 ---
 
-## 📁 Project Architecture
+## 📁 Repository Structure
 
 ```text
-vps-guardian-mcp/
+VPS-Guardian-MCP/
 ├── src/
 │   ├── __init__.py          # Package initialization
-│   ├── server.py            # FastMCP server & 9 registered tools
+│   ├── server.py            # FastMCP server and tool registry (9 tools)
 │   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
-│   ├── docker_manager.py    # Container inspection, logs, and live stats
-│   └── recover.py           # Whitelisted recovery & emergency actions
-├── pyproject.toml           # Package metadata, pinned dependencies (<2.0.0)
+│   ├── docker_manager.py    # Container inventory, logs, and live telemetry
+│   └── recover.py           # Whitelisted recovery and emergency actions
+├── pyproject.toml           # Package configuration and dependencies
 ├── LICENSE                  # MIT License (2026, murzirius)
-├── .gitignore               # Ignored environments and caches
-└── README.md                # Documentation and project stats
+├── .gitignore               # Ignored environments, builds, and caches
+└── README.md                # Documentation and technical reference
 ```
 
 ---
 
-## 🚀 Installation & VPS Setup
+## 🚀 Installation & Server Setup
 
-### 1. Clone & Install on your VPS
+### 1. Install on the VPS
+
+Clone the repository and install dependencies in an isolated virtual environment:
 
 ```bash
 git clone https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
@@ -83,21 +88,23 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-### 2. Permissions (No Root Required)
+### 2. Configure Permissions (Unprivileged Operation)
+
+To allow the service user to monitor Docker and system logs without requiring root privileges:
 
 ```bash
-# Allow reading Docker without root
+# Add user to the docker socket group
 sudo usermod -aG docker $USER
 
-# Allow reading system logs
+# Add user to systemd journal reader group
 sudo usermod -aG systemd-journal $USER
 ```
 
 ---
 
-## ⚙️ Antigravity & Claude Desktop Configuration
+## ⚙️ Client Configuration
 
-Add `VPS-Guardian-MCP` to your `~/.gemini/config/mcp_config.json` (for Antigravity) or `claude_desktop_config.json`:
+Configure your MCP client (Antigravity `mcp_config.json` or Claude Desktop `claude_desktop_config.json`) to establish a clean stdio connection via SSH:
 
 ```json
 {
@@ -107,12 +114,12 @@ Add `VPS-Guardian-MCP` to your `~/.gemini/config/mcp_config.json` (for Antigravi
       "args": [
         "-q",
         "-i",
-        "C:/Users/Михаил/.ssh/id_ed25519",
+        "C:/Users/<Username>/.ssh/id_ed25519",
         "-o",
         "LogLevel=ERROR",
         "-o",
         "StrictHostKeyChecking=accept-new",
-        "root@65.75.200.108",
+        "root@<YOUR_VPS_IP>",
         "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp"
       ]
     }
@@ -122,22 +129,33 @@ Add `VPS-Guardian-MCP` to your `~/.gemini/config/mcp_config.json` (for Antigravi
 
 ---
 
-## 🛠️ Complete Tools Reference
+## 🛠️ Tools Reference
 
 | Tool Name | Parameters | Description |
 | :--- | :--- | :--- |
-| `get_system_health` | none | Full CPU (per core), RAM, Disk I/O, Network I/O, Uptime |
-| `get_top_processes` | `sort_by` ('cpu'/'memory'), `limit` (int) | Top resource-consuming processes |
-| `check_service_status` | `service_name` (str) | Systemd unit status (`active`, `enabled`, logs) |
-| `get_failed_systemd_units`| none | List all degraded or failed systemd units |
-| `read_service_logs` | `service_name` (str), `lines_count` (int), `grep_filter` (str) | Safe service logs with Python keyword filtering |
-| `list_docker_containers` | `all` (bool, default True) | List containers with ports, volumes, and health |
-| `get_docker_container_logs` | `container_name` (str), `lines_count` (int) | Tail stdout/stderr for a container |
-| `get_docker_stats` | none | Live CPU %, Memory %, Network & Block I/O per container |
-| `execute_recovery` | `action_name` (str) | Whitelisted actions: `clean_docker_cache`, `restart_nginx` |
+| `get_system_health` | *none* | Complete system snapshot (per-core CPU, RAM, Swap, Disk I/O, Network I/O, Uptime) |
+| `get_top_processes` | `sort_by` (*"cpu"* / *"memory"*), `limit` (*int*) | Top resource-consuming processes with memory and command details |
+| `check_service_status` | `service_name` (*string*) | Detailed systemd unit operational status and recent unit logs |
+| `get_failed_systemd_units`| *none* | Discovers degraded or failed systemd units across the operating system |
+| `read_service_logs` | `service_name` (*string*), `lines_count` (*int*), `grep_filter` (*string*) | Retrieves service logs with safe, pure-Python keyword filtering |
+| `list_docker_containers` | `all` (*bool*, default: *true*) | Lists all Docker containers with port forwards, volumes, and health state |
+| `get_docker_container_logs` | `container_name` (*string*), `lines_count` (*int*) | Fetches stdout/stderr logs from a specific container |
+| `get_docker_stats` | *none* | Live telemetry for running containers (CPU %, RAM, Network and Block I/O) |
+| `execute_recovery` | `action_name` (*string*) | Executes whitelisted recovery operations (`clean_docker_cache`, `restart_nginx`) |
+
+---
+
+## 🔒 Security Architecture
+
+1. **No Shell Invocations**: Subprocess executions consistently use explicit argument arrays (`shell=False`) to prevent command injection.
+2. **Strict Parameter Validation**: Service identifiers, container names, and filters are validated against restrictive regex patterns.
+3. **Immutable Whitelists**: Execution actions are governed by fixed lookup tables.
+4. **Graceful Permission Degradation**: Missing capabilities (e.g. unprivileged Docker socket or lack of sudo) return descriptive diagnostic payloads rather than crashing the protocol stream.
 
 ---
 
 ## 📄 License
 
-MIT License - Copyright (c) 2026 murzirius. See [LICENSE](LICENSE) for details.
+Distributed under the MIT License. See [LICENSE](LICENSE) for more information.
+
+Copyright (c) 2026 murzirius.
