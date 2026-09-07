@@ -35,7 +35,7 @@ dependencies = [
 ]
 
 [project.scripts]
-vps-guardian-mcp = "server:main"
+vps-guardian-mcp = "src.server:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
