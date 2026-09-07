@@ -4,9 +4,10 @@
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%202024--11--05-green.svg)](https://modelcontextprotocol.io/)
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
-[![Tools Count](https://img.shields.io/badge/Tools-9%20Active-brightgreen.svg)](#-tools-reference)
+[![Tools Count](https://img.shields.io/badge/Tools-11%20Active-brightgreen.svg)](#-tools-reference)
+[![Updates](https://img.shields.io/badge/Changelog-UPDATES.md-informational.svg)](UPDATES.md)
 
-A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, system diagnostics, and isolated emergency recovery.
+A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, network security audits, and isolated emergency recovery.
 
 It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structured, programmatic tools to inspect server health and resolve infrastructure issues without raw shell access or unconstrained root privileges.
 
@@ -16,8 +17,8 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.1.0` |
-| **Active MCP Tools** | **9 tools** |
+| **Version** | `0.3.0` (See [UPDATES.md](UPDATES.md)) |
+| **Active MCP Tools** | **11 tools** |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch Linux) |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), strict regex whitelisting, atomic operations |
@@ -39,7 +40,11 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 - **`get_docker_container_logs`**: Safely retrieves stdout and stderr streams for any container with bounded line limits.
 - **`get_docker_stats`**: Streams live resource telemetry (CPU %, memory usage and limits, network RX/TX, block I/O) equivalent to `docker stats`.
 
-### 3. 🔧 Isolated Recovery (`src/recover.py`)
+### 3. 🌐 Network Security & Firewall Diagnostics (`src/network.py`)
+- **`get_open_ports`**: Discovers all open and listening network ports (TCP and UDP, IPv4 and IPv6) with corresponding bound processes and PIDs.
+- **`get_ufw_status`**: Audits Uncomplicated Firewall (UFW) active status, default incoming/outgoing policies, and detailed rule configurations.
+
+### 4. 🔧 Isolated Recovery (`src/recover.py`)
 - **`execute_recovery`**: Enforces strict whitelist-only recovery actions (`clean_docker_cache`, `restart_nginx`), rejecting any unauthorized commands with explicit access errors.
 
 ---
@@ -48,7 +53,7 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 
 When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the following operational standards:
 
-1. **Invoke Native MCP Tools Exclusively**: Never simulate or guess server states. Always call the corresponding tool (`get_system_health`, `list_docker_containers`, etc.) to obtain verified ground-truth telemetry.
+1. **Invoke Native MCP Tools Exclusively**: Never simulate or guess server states. Always call the corresponding tool (`get_system_health`, `list_docker_containers`, `get_open_ports`, etc.) to obtain verified ground-truth telemetry.
 2. **Follow the Principle of Least Privilege**: Use read-only diagnostic tools first before suggesting or applying changes.
 3. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
 4. **Require Confirmation for State-Changing Operations**: Any recovery or modification action (`execute_recovery`) must be explicitly confirmed with the operator prior to execution.
@@ -61,13 +66,15 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 VPS-Guardian-MCP/
 ├── src/
 │   ├── __init__.py          # Package initialization
-│   ├── server.py            # FastMCP server and tool registry (9 tools)
+│   ├── server.py            # FastMCP server and tool registry (11 tools)
 │   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
 │   ├── docker_manager.py    # Container inventory, logs, and live telemetry
+│   ├── network.py           # Listening ports, bound processes, and UFW rules
 │   └── recover.py           # Whitelisted recovery and emergency actions
 ├── pyproject.toml           # Package configuration and dependencies
 ├── LICENSE                  # MIT License (2026, murzirius)
 ├── .gitignore               # Ignored environments, builds, and caches
+├── UPDATES.md               # Project changelog and release history
 └── README.md                # Documentation and technical reference
 ```
 
@@ -90,7 +97,7 @@ pip install -e .
 
 ### 2. Configure Permissions (Unprivileged Operation)
 
-To allow the service user to monitor Docker and system logs without requiring root privileges:
+To allow the service user to monitor Docker, network connections, and system logs without requiring root privileges:
 
 ```bash
 # Add user to the docker socket group
@@ -141,6 +148,8 @@ Configure your MCP client (Antigravity `mcp_config.json` or Claude Desktop `clau
 | `list_docker_containers` | `all` (*bool*, default: *true*) | Lists all Docker containers with port forwards, volumes, and health state |
 | `get_docker_container_logs` | `container_name` (*string*), `lines_count` (*int*) | Fetches stdout/stderr logs from a specific container |
 | `get_docker_stats` | *none* | Live telemetry for running containers (CPU %, RAM, Network and Block I/O) |
+| `get_open_ports` | *none* | Discovers all listening ports (TCP/UDP, IPv4/IPv6) with process names and PIDs |
+| `get_ufw_status` | *none* | Audits UFW firewall state, default traffic policies, and active rules |
 | `execute_recovery` | `action_name` (*string*) | Executes whitelisted recovery operations (`clean_docker_cache`, `restart_nginx`) |
 
 ---

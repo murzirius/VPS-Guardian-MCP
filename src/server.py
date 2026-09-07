@@ -6,6 +6,7 @@ Exposes safe, isolated tools for:
 - Service management: Systemd service health checks, failed units inspector.
 - Service logs: Safe log inspection with Python-level grep filtering.
 - Docker management: List containers, inspect container logs, live resource statistics.
+- Network & firewall: Discover open/listening ports and audit UFW firewall rules.
 - Emergency recovery: Whitelisted recovery actions.
 """
 
@@ -44,6 +45,10 @@ try:
         get_docker_stats as _get_docker_stats,
         list_docker_containers as _list_docker_containers,
     )
+    from src.network import (
+        get_open_ports as _get_open_ports,
+        get_ufw_status as _get_ufw_status,
+    )
     from src.recover import run_recovery_action as _run_recovery_action
 except ImportError:
     from monitor import (
@@ -57,6 +62,10 @@ except ImportError:
         get_docker_container_logs as _get_docker_container_logs,
         get_docker_stats as _get_docker_stats,
         list_docker_containers as _list_docker_containers,
+    )
+    from network import (
+        get_open_ports as _get_open_ports,
+        get_ufw_status as _get_ufw_status,
     )
     from recover import run_recovery_action as _run_recovery_action
 
@@ -229,7 +238,43 @@ def get_docker_stats() -> str:
 
 
 # ============================================================================
-# 3. Emergency Recovery Tools
+# 3. Network & Firewall Tools
+# ============================================================================
+
+@mcp.tool()
+def get_open_ports() -> str:
+    """Discover all listening network ports (TCP and UDP) and identify bound processes.
+
+    Returns:
+        JSON string listing open ports, protocols (TCP/UDP), binding addresses (IPv4/IPv6),
+        and process names/PIDs.
+    """
+    try:
+        data = _get_open_ports()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in get_open_ports: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def get_ufw_status() -> str:
+    """Inspect the status and active filtering rules of the UFW firewall.
+
+    Returns:
+        JSON string containing UFW active state, default incoming/outgoing policies,
+        and all active firewall rules.
+    """
+    try:
+        data = _get_ufw_status()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in get_ufw_status: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 4. Emergency Recovery Tools
 # ============================================================================
 
 @mcp.tool()
