@@ -1,40 +1,70 @@
-"""System monitoring module for VPS-Guardian-MCP.
+"""System monitoring and diagnostics module for VPS-Guardian-MCP.
 
-Collects CPU, RAM, Disk, and Docker container metrics using psutil and docker-py.
-All operations are safely wrapped in try-except blocks to ensure robust error
-reporting without crashing the MCP server.
+Provides comprehensive metrics collection:
+- Detailed CPU (per core, load average), RAM, Swap, Disk I/O, Network I/O, Uptime.
+- Process inspection (Top CPU/Memory processes).
+- Systemd service health check and listing of failed units.
+- Service log inspection with safe Python-level keyword/regex filtering.
 """
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import platform
-from typing import Any, Dict, List
+import re
+import shutil
+import subprocess
+import time
+from typing import Any, Dict, List, Optional
 
 import psutil
 
 logger = logging.getLogger("vps_guardian.monitor")
 
+# Whitelist regex for service names (alphanumeric, dots, dashes, underscores)
+SERVICE_NAME_REGEX = re.compile(r"^[a-zA-Z0-9_.-]{1,64}$")
 
-def _format_bytes(bytes_value: int) -> str:
-    """Format bytes into a human-readable string (KB, MB, GB, TB)."""
+
+def _format_bytes(bytes_value: int | float) -> str:
+    """Format bytes into a human-readable string (B, KB, MB, GB, TB)."""
     val = float(bytes_value)
     for unit in ["B", "KB", "MB", "GB", "TB"]:
-        if val < 1024.0 or unit == "TB":
+        if abs(val) < 1024.0 or unit == "TB":
             return f"{val:.2f} {unit}"
         val /= 1024.0
     return f"{val:.2f} TB"
 
 
-def get_cpu_info() -> Dict[str, Any]:
-    """Collect CPU load percentage and core information."""
+def get_system_health() -> Dict[str, Any]:
+    """Collect full system health snapshot.
+
+    Includes:
+    - CPU: overall usage, per-core percentages, core counts, load averages (1m, 5m, 15m).
+    - RAM & Swap: total, used, free/available, percentage.
+    - Disk: root usage and Disk I/O statistics (read/write bytes, ops).
+    - Network I/O: total bytes sent/received, packets sent/received.
+    - Uptime: boot timestamp, human-readable uptime string.
+    """
+    snapshot: Dict[str, Any] = {
+        "status": "ok",
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "system": {
+            "os": platform.system(),
+            "platform": platform.platform(),
+            "architecture": platform.machine(),
+            "hostname": platform.node(),
+        },
+    }
+
+    # 1. CPU Metrics
     try:
-        cpu_percent = psutil.cpu_percent(interval=0.5)
+        cpu_overall = psutil.cpu_percent(interval=0.5)
+        cpu_per_core = psutil.cpu_percent(interval=None, percpu=True)
         logical_cores = psutil.cpu_count(logical=True)
         physical_cores = psutil.cpu_count(logical=False)
 
-        # Linux load average (1m, 5m, 15m)
         load_avg = None
         if hasattr(psutil, "getloadavg"):
             try:
@@ -47,29 +77,23 @@ def get_cpu_info() -> Dict[str, Any]:
             except (OSError, AttributeError):
                 load_avg = None
 
-        return {
+        snapshot["cpu"] = {
             "status": "ok",
-            "cpu_usage_percent": cpu_percent,
-            "physical_cores": physical_cores,
+            "usage_percent_total": cpu_overall,
+            "usage_percent_per_core": cpu_per_core,
             "logical_cores": logical_cores,
+            "physical_cores": physical_cores,
             "load_average_1_5_15m": load_avg,
         }
     except Exception as exc:
-        logger.error(f"Error reading CPU info: {exc}", exc_info=True)
-        return {
-            "status": "error",
-            "error": f"Failed to retrieve CPU info: {str(exc)}",
-            "cpu_usage_percent": None,
-        }
+        logger.error(f"Failed to read CPU metrics: {exc}")
+        snapshot["cpu"] = {"status": "error", "error": str(exc)}
 
-
-def get_memory_info() -> Dict[str, Any]:
-    """Collect RAM and Swap memory utilization."""
+    # 2. RAM & Swap
     try:
         vm = psutil.virtual_memory()
         swap = psutil.swap_memory()
-
-        return {
+        snapshot["memory"] = {
             "status": "ok",
             "ram": {
                 "total": _format_bytes(vm.total),
@@ -82,153 +106,345 @@ def get_memory_info() -> Dict[str, Any]:
             },
             "swap": {
                 "total": _format_bytes(swap.total),
+                "total_bytes": swap.total,
                 "used": _format_bytes(swap.used),
+                "used_bytes": swap.used,
                 "free": _format_bytes(swap.free),
                 "used_percent": swap.percent,
             },
         }
     except Exception as exc:
-        logger.error(f"Error reading memory info: {exc}", exc_info=True)
-        return {
-            "status": "error",
-            "error": f"Failed to retrieve RAM info: {str(exc)}",
-        }
+        logger.error(f"Failed to read memory metrics: {exc}")
+        snapshot["memory"] = {"status": "error", "error": str(exc)}
 
-
-def get_disk_info() -> Dict[str, Any]:
-    """Collect root filesystem disk space metrics."""
+    # 3. Disk Usage and I/O
     try:
-        # Select root directory: '/' on POSIX, root drive on Windows
         root_path = "/" if os.name != "nt" else os.path.abspath(os.sep)
         disk = psutil.disk_usage(root_path)
 
-        return {
+        io_data: Dict[str, Any] = {}
+        try:
+            disk_io = psutil.disk_io_counters()
+            if disk_io:
+                io_data = {
+                    "read_bytes": _format_bytes(disk_io.read_bytes),
+                    "write_bytes": _format_bytes(disk_io.write_bytes),
+                    "read_count": disk_io.read_count,
+                    "write_count": disk_io.write_count,
+                }
+        except Exception:
+            io_data = {"note": "Disk I/O counters unavailable"}
+
+        snapshot["disk"] = {
             "status": "ok",
-            "mount_point": root_path,
+            "root_mount": root_path,
             "total": _format_bytes(disk.total),
-            "total_bytes": disk.total,
             "used": _format_bytes(disk.used),
-            "used_bytes": disk.used,
             "free": _format_bytes(disk.free),
-            "free_bytes": disk.free,
             "used_percent": disk.percent,
+            "io_counters": io_data,
         }
     except Exception as exc:
-        logger.error(f"Error reading disk info: {exc}", exc_info=True)
+        logger.error(f"Failed to read disk metrics: {exc}")
+        snapshot["disk"] = {"status": "error", "error": str(exc)}
+
+    # 4. Network I/O
+    try:
+        net_io = psutil.net_io_counters()
+        snapshot["network"] = {
+            "status": "ok",
+            "bytes_sent": _format_bytes(net_io.bytes_sent),
+            "bytes_recv": _format_bytes(net_io.bytes_recv),
+            "packets_sent": net_io.packets_sent,
+            "packets_recv": net_io.packets_recv,
+            "errin": net_io.errin,
+            "errout": net_io.errout,
+            "dropin": net_io.dropin,
+            "dropout": net_io.dropout,
+        }
+    except Exception as exc:
+        logger.error(f"Failed to read network metrics: {exc}")
+        snapshot["network"] = {"status": "error", "error": str(exc)}
+
+    # 5. Uptime
+    try:
+        boot_time = psutil.boot_time()
+        uptime_seconds = int(time.time() - boot_time)
+        days, remainder = divmod(uptime_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        snapshot["uptime"] = {
+            "status": "ok",
+            "boot_timestamp": datetime.datetime.fromtimestamp(boot_time, datetime.timezone.utc).isoformat(),
+            "uptime_seconds": uptime_seconds,
+            "uptime_human": f"{days}d {hours}h {minutes}m {seconds}s",
+        }
+    except Exception as exc:
+        logger.error(f"Failed to calculate uptime: {exc}")
+        snapshot["uptime"] = {"status": "error", "error": str(exc)}
+
+    return snapshot
+
+
+def get_top_processes(sort_by: str = "cpu", limit: int = 10) -> Dict[str, Any]:
+    """Retrieve top processes consuming the most system resources.
+
+    Args:
+        sort_by: Metric to sort by ('cpu' or 'memory'). Default is 'cpu'.
+        limit: Maximum number of processes to return (1 to 50, default: 10).
+
+    Returns:
+        Dictionary with status and ranked list of top processes.
+    """
+    valid_sorts = {"cpu": "cpu_percent", "memory": "memory_percent"}
+    sort_key = valid_sorts.get(sort_by.lower().strip(), "cpu_percent")
+
+    # Clamp limit
+    try:
+        limit = max(1, min(int(limit), 50))
+    except (ValueError, TypeError):
+        limit = 10
+
+    processes: List[Dict[str, Any]] = []
+
+    # Prime cpu_percent calculations
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            proc.cpu_percent(interval=None)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    # Small sleep to get accurate delta if sorting by CPU
+    if sort_key == "cpu_percent":
+        time.sleep(0.15)
+
+    attrs = ["pid", "name", "username", "cpu_percent", "memory_percent", "memory_info", "status", "cmdline"]
+    for proc in psutil.process_iter(attrs):
+        try:
+            info = proc.info
+            mem_info = info.get("memory_info")
+            rss_bytes = getattr(mem_info, "rss", 0) if mem_info else 0
+
+            cmdline = info.get("cmdline") or []
+            cmd_summary = " ".join(cmdline[:5]) if cmdline else (info.get("name") or "unknown")
+
+            processes.append({
+                "pid": info.get("pid"),
+                "name": info.get("name") or "unknown",
+                "user": info.get("username") or "unknown",
+                "cpu_percent": round(info.get("cpu_percent") or 0.0, 1),
+                "memory_percent": round(info.get("memory_percent") or 0.0, 1),
+                "memory_rss": _format_bytes(rss_bytes),
+                "status": info.get("status") or "unknown",
+                "command": cmd_summary[:100],
+            })
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+        except Exception as exc:
+            logger.debug(f"Error inspecting process: {exc}")
+            continue
+
+    # Sort descending
+    processes.sort(key=lambda p: p.get(sort_key, 0), reverse=True)
+    top_list = processes[:limit]
+
+    return {
+        "status": "ok",
+        "sorted_by": sort_by,
+        "total_processes_scanned": len(processes),
+        "count": len(top_list),
+        "processes": top_list,
+    }
+
+
+def check_service_status(service_name: str) -> Dict[str, Any]:
+    """Check the status of a systemd service (e.g., 'nginx', 'mysql', 'postgresql', 'ufw').
+
+    Args:
+        service_name: Name of the systemd unit (e.g. 'nginx' or 'nginx.service').
+
+    Returns:
+        Structured dictionary with active state, loaded state, and recent status output.
+    """
+    if not isinstance(service_name, str):
+        return {"status": "error", "error": "service_name must be a string."}
+
+    clean_name = service_name.strip()
+    if not SERVICE_NAME_REGEX.match(clean_name):
         return {
             "status": "error",
-            "error": f"Failed to retrieve disk usage for root: {str(exc)}",
+            "error": f"Invalid service name '{clean_name}'. Only alphanumeric characters, dots, and hyphens are permitted.",
         }
 
-
-def get_docker_health() -> Dict[str, Any]:
-    """Inspect Docker daemon and list any failed, stopped, or unhealthy containers."""
-    try:
-        import docker
-        from docker.errors import DockerException
-    except ImportError:
-        return {
-            "status": "error",
-            "error": "The 'docker' python package is not installed.",
-            "failed_containers": [],
-        }
-
-    try:
-        client = docker.from_env()
-        # Verify connectivity
-        client.ping()
-    except DockerException as exc:
-        err_msg = str(exc)
-        if "permission denied" in err_msg.lower() or "socket" in err_msg.lower():
-            friendly_err = (
-                "Permission denied accessing /var/run/docker.sock. "
-                "Ensure the current user is added to the 'docker' group "
-                "('sudo usermod -aG docker $USER') or run with docker permissions."
-            )
-        else:
-            friendly_err = (
-                f"Docker daemon is not accessible or not running: {err_msg}"
-            )
-        logger.warning(f"Docker health check failed: {friendly_err}")
+    systemctl_bin = shutil.which("systemctl")
+    if not systemctl_bin:
         return {
             "status": "unavailable",
-            "error": friendly_err,
-            "total_containers": 0,
-            "running_containers": 0,
-            "failed_containers": [],
+            "error": "systemctl command not found. This host does not appear to run systemd.",
+            "service": clean_name,
         }
-    except Exception as exc:
-        logger.error(f"Unexpected error checking Docker status: {exc}", exc_info=True)
+
+    unit_name = clean_name if clean_name.endswith(".service") else f"{clean_name}.service"
+
+    try:
+        # Check active state
+        is_active_proc = subprocess.run(
+            [systemctl_bin, "is-active", unit_name],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        active_state = is_active_proc.stdout.strip() or is_active_proc.stderr.strip()
+
+        # Check enabled state
+        is_enabled_proc = subprocess.run(
+            [systemctl_bin, "is-enabled", unit_name],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        enabled_state = is_enabled_proc.stdout.strip() or is_enabled_proc.stderr.strip()
+
+        # Get detailed summary (limited to last 10 lines)
+        status_proc = subprocess.run(
+            [systemctl_bin, "status", unit_name, "--no-pager", "-n", "10"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+        status_output = status_proc.stdout.strip() or status_proc.stderr.strip()
+
+        return {
+            "status": "ok",
+            "service": unit_name,
+            "active_state": active_state,
+            "is_running": active_state == "active",
+            "enabled_state": enabled_state,
+            "details": status_output,
+        }
+    except subprocess.TimeoutExpired:
         return {
             "status": "error",
-            "error": f"Unexpected error connecting to Docker: {str(exc)}",
-            "failed_containers": [],
+            "error": f"Timeout while checking status for service '{unit_name}'.",
+            "service": unit_name,
+        }
+    except PermissionError as exc:
+        return {
+            "status": "error",
+            "error": f"Permission denied executing systemctl: {str(exc)}",
+            "service": unit_name,
+        }
+    except Exception as exc:
+        logger.error(f"Error checking service '{unit_name}': {exc}", exc_info=True)
+        return {
+            "status": "error",
+            "error": f"Unexpected error checking service status: {str(exc)}",
+            "service": unit_name,
+        }
+
+
+def get_failed_systemd_units() -> Dict[str, Any]:
+    """Retrieve all failed systemd units on the VPS ('systemctl --failed').
+
+    Returns:
+        Structured dictionary listing any degraded or failed units.
+    """
+    systemctl_bin = shutil.which("systemctl")
+    if not systemctl_bin:
+        return {
+            "status": "unavailable",
+            "error": "systemctl utility is not available on this host.",
+            "failed_units": [],
         }
 
     try:
-        all_containers = client.containers.list(all=True)
-        running_count = 0
-        failed_containers: List[Dict[str, Any]] = []
+        proc = subprocess.run(
+            [systemctl_bin, "--failed", "--no-legend", "--plain"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        if proc.returncode != 0:
+            err_msg = proc.stderr.strip() or proc.stdout.strip()
+            return {
+                "status": "error",
+                "error": f"systemctl --failed exited with code {proc.returncode}: {err_msg}",
+                "failed_units": [],
+            }
 
-        for container in all_containers:
-            state = container.attrs.get("State", {})
-            status = container.status.lower()
-            exit_code = state.get("ExitCode", 0)
-            health_status = state.get("Health", {}).get("Status", "none")
-
-            is_running = status == "running"
-            if is_running:
-                running_count += 1
-
-            # Container is considered failed/problematic if:
-            # 1. It exited with non-zero code
-            # 2. Status is 'dead', 'restarting', or 'paused'
-            # 3. Status is 'exited' and exit code != 0
-            # 4. Health status is 'unhealthy'
-            is_failed = (
-                status in ("dead", "restarting")
-                or (status == "exited" and exit_code != 0)
-                or health_status == "unhealthy"
-            )
-
-            if is_failed:
-                failed_containers.append({
-                    "id": container.short_id,
-                    "name": container.name,
-                    "image": container.image.tags if hasattr(container.image, "tags") else str(container.image),
-                    "status": status,
-                    "exit_code": exit_code,
-                    "health": health_status,
-                    "error": state.get("Error", ""),
-                    "finished_at": state.get("FinishedAt", ""),
-                })
+        lines = proc.stdout.strip().splitlines()
+        failed_units = []
+        for line in lines:
+            parts = line.split(None, 4)
+            if parts:
+                unit_dict = {
+                    "unit": parts[0],
+                    "load": parts[1] if len(parts) > 1 else "",
+                    "active": parts[2] if len(parts) > 2 else "",
+                    "sub": parts[3] if len(parts) > 3 else "",
+                    "description": parts[4] if len(parts) > 4 else "",
+                }
+                failed_units.append(unit_dict)
 
         return {
-            "status": "connected",
-            "total_containers": len(all_containers),
-            "running_containers": running_count,
-            "failed_containers_count": len(failed_containers),
-            "failed_containers": failed_containers,
+            "status": "ok",
+            "total_failed": len(failed_units),
+            "is_system_healthy": len(failed_units) == 0,
+            "failed_units": failed_units,
         }
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "error": "Timed out listing failed systemd units.", "failed_units": []}
     except Exception as exc:
-        logger.error(f"Failed to inspect containers: {exc}", exc_info=True)
-        return {
-            "status": "error",
-            "error": f"Failed while listing containers: {str(exc)}",
-            "failed_containers": [],
-        }
+        logger.error(f"Error listing failed units: {exc}", exc_info=True)
+        return {"status": "error", "error": f"Unexpected error: {str(exc)}", "failed_units": []}
 
 
-def collect_system_health() -> Dict[str, Any]:
-    """Aggregate complete VPS health metrics."""
-    return {
-        "system": {
-            "os": platform.system(),
-            "platform": platform.platform(),
-            "architecture": platform.machine(),
-        },
-        "cpu": get_cpu_info(),
-        "memory": get_memory_info(),
-        "disk": get_disk_info(),
-        "docker": get_docker_health(),
-    }
+def read_service_logs(
+    service_name: str,
+    lines_count: int = 50,
+    grep_filter: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Safely fetch and optionally filter the last N lines of logs for a service or Docker container.
+
+    Keyword filtering is performed in pure Python to eliminate any command injection risks.
+
+    Args:
+        service_name: Target unit (e.g. 'nginx', 'systemd:mysql', 'docker:api_gateway')
+        lines_count: Number of recent log lines to retrieve (default: 50, max: 1000)
+        grep_filter: Optional keyword to filter lines (case-insensitive, e.g. 'ERROR', '403', 'denied')
+
+    Returns:
+        Dictionary containing matched log lines or error details.
+    """
+    # Import log retrieval functions from recover module
+    try:
+        from src.recover import fetch_service_logs
+    except ImportError:
+        from recover import fetch_service_logs
+
+    # Fetch raw logs
+    result = fetch_service_logs(service_name=service_name, lines_count=lines_count)
+
+    if result.get("status") != "ok" or not grep_filter:
+        return result
+
+    raw_logs = result.get("logs", "")
+    if not raw_logs or not isinstance(raw_logs, str):
+        return result
+
+    filter_pattern = grep_filter.strip().lower()
+    log_lines = raw_logs.splitlines()
+    matching_lines = [line for line in log_lines if filter_pattern in line.lower()]
+
+    result["filtered"] = True
+    result["grep_filter"] = grep_filter
+    result["total_scanned_lines"] = len(log_lines)
+    result["matching_lines_count"] = len(matching_lines)
+    result["logs"] = "\n".join(matching_lines) if matching_lines else f"(No log lines matched filter '{grep_filter}')"
+
+    return result
