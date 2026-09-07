@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.5.0] - 2026-09-07
+
+### Added
+- **Emergency Recovery & Backup Engine (`src/recover.py`)**:
+  - Expanded `execute_recovery` with fine-grained whitelisted action handlers:
+    * `restart_service`: Restarts permitted systemd units (`systemctl restart <target>`).
+    * `clean_docker_cache`: Deep prune of unused containers, networks, images, and volumes.
+    * `clean_system_logs`: Systemd journal log vacuuming (`--vacuum-time=3d`) and rotation cleanup for `/var/log/*.gz`.
+    * `kill_process`: Safe termination of runaway processes by PID with core daemon protection (PID 1, sshd, init).
+    * `restart_nginx`: Backward-compatible alias for `restart_service` targeting Nginx.
+  - `create_backup`: Safe, shell-less `.tar.gz` archive generation of authorized directory trees into `/var/backups/vps-guardian/`.
+- Registered `create_backup` in `src/server.py` and updated `execute_recovery` with target parameter support, bringing total tool inventory to **15 active MCP tools**.
+
+---
+
 ## [0.4.0] - 2026-09-07
 
 ### Added

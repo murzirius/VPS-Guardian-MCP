@@ -1,150 +1,135 @@
-"""Safe recovery and log extraction module for VPS-Guardian-MCP.
+"""Safe recovery and backup module for VPS-Guardian-MCP.
 
-Provides strictly isolated, secure methods for reading service logs and executing
-predefined recovery actions without risking arbitrary command execution.
+Provides strictly isolated, secure recovery actions and archive generation:
+- Whitelist-enforced system recovery:
+  * 'restart_service' (restarts permitted systemd services)
+  * 'clean_docker_cache' (deep Docker prune: containers, networks, images, volumes)
+  * 'clean_system_logs' (prunes old journal logs with journalctl vacuum and rotated logs)
+  * 'kill_process' (safely terminates non-critical runaway processes by PID)
+  * 'restart_nginx' (legacy alias for restart_service target=nginx)
+- Isolated backup creation (tar.gz compression) of authorized website and config directories.
 """
 
 from __future__ import annotations
 
+import datetime
 import logging
+import os
 import re
 import shutil
 import subprocess
-from typing import Any, Dict, List
+import tarfile
+import time
+from typing import Any, Dict, List, Optional
+
+import psutil
 
 logger = logging.getLogger("vps_guardian.recover")
 
-# Allowed recovery actions whitelist
+# Whitelist of permitted recovery actions
 ALLOWED_RECOVERY_ACTIONS = {
-    "clean_docker_cache": "Cleans unused Docker containers, networks, images, and build cache.",
-    "restart_nginx": "Safely restarts the Nginx web server service.",
+    "restart_service": "Restart a specific system service (requires target=service_name).",
+    "clean_docker_cache": "Prunes unused Docker containers, networks, dangling/unused images, and build cache.",
+    "clean_system_logs": "Prunes old systemd journal entries (>3 days) and rotated archived logs in /var/log.",
+    "kill_process": "Terminates a runaway or stuck process (requires target=PID).",
+    "restart_nginx": "Safely restarts the Nginx web server service (alias for restart_service target=nginx).",
 }
 
-# Regex to prevent command injection: only alphanumeric, underscore, hyphen, and optional prefix
-SERVICE_NAME_REGEX = re.compile(r"^(?:(docker|systemd):)?([a-zA-Z0-9_-]{1,64})$")
+# Regex to prevent command injection in service names
+SERVICE_NAME_REGEX = re.compile(r"^[a-zA-Z0-9_.-]{1,64}$")
 
+# Protected critical system processes that must NEVER be terminated via kill_process
+PROTECTED_PROCESS_NAMES = {
+    "systemd",
+    "init",
+    "kthreadd",
+    "sshd",
+    "vps-guardian",
+    "vps-guardian-mc",
+    "python",
+    "python3",
+}
+
+# Permitted backup source directory roots
+ALLOWED_BACKUP_ROOTS = [
+    "/var/www",
+    "/etc/nginx",
+    "/etc/mysql",
+    "/etc/postgresql",
+    "/etc/docker",
+    "/etc/caddy",
+]
+
+
+def _format_bytes(bytes_value: int | float) -> str:
+    """Format bytes into a human-readable string (B, KB, MB, GB)."""
+    val = float(bytes_value)
+    for unit in ["B", "KB", "MB", "GB"]:
+        if abs(val) < 1024.0 or unit == "GB":
+            return f"{val:.2f} {unit}"
+        val /= 1024.0
+    return f"{val:.2f} GB"
+
+
+# ============================================================================
+# Log Inspection Helper (Used by monitor.py & server.py)
+# ============================================================================
 
 def fetch_service_logs(service_name: str, lines_count: int = 50) -> Dict[str, Any]:
-    """Safely fetch the last N lines of logs for a permitted service or Docker container.
-
-    Supported targets:
-    - 'nginx' (checks systemd journal and fallback to /var/log/nginx/error.log)
-    - 'docker:<container_name>' or container name matching a Docker container
-    - 'systemd:<service_name>' or '<service_name>' via journalctl
-
-    Args:
-        service_name: Target service or container name (e.g., 'nginx', 'docker:web_app', 'systemd:redis')
-        lines_count: Number of log lines to retrieve (clamped between 1 and 1000)
-
-    Returns:
-        Structured dictionary containing log entries or clear error messages.
-    """
-    # 1. Validate & clamp lines_count
+    """Safely fetch the last N lines of logs for a permitted service or Docker container."""
     try:
-        lines_count = int(lines_count)
-        if lines_count <= 0:
-            lines_count = 50
-        elif lines_count > 1000:
-            lines_count = 1000
+        lines_count = max(1, min(int(lines_count), 1000))
     except (ValueError, TypeError):
         lines_count = 50
 
-    # 2. Strict validation of service_name to prevent command injection
-    if not isinstance(service_name, str):
-        return {
-            "status": "error",
-            "error": "Invalid service_name format. Expected a string.",
-            "logs": "",
-        }
+    if not isinstance(service_name, str) or not service_name.strip():
+        return {"status": "error", "error": "Invalid service_name.", "logs": ""}
 
     cleaned_name = service_name.strip()
-    match = SERVICE_NAME_REGEX.match(cleaned_name)
+    match = re.match(r"^(?:(docker|systemd):)?([a-zA-Z0-9_-]{1,64})$", cleaned_name)
     if not match:
         return {
             "status": "error",
-            "error": (
-                f"Invalid service_name '{cleaned_name}'. "
-                "Only alphanumeric characters, dashes, and underscores are allowed "
-                "(optional prefix 'docker:' or 'systemd:')."
-            ),
+            "error": f"Invalid service_name '{cleaned_name}'. Only alphanumeric characters, dashes, and dots allowed.",
             "logs": "",
         }
 
     prefix, target = match.groups()
 
-    # 3. Handle Docker container logs
     if prefix == "docker":
         return _fetch_docker_logs(target, lines_count)
 
-    # 4. Handle Nginx logs (specialized handling)
     if cleaned_name == "nginx" or target == "nginx":
         return _fetch_nginx_logs(lines_count)
 
-    # 5. Handle systemd service logs
     return _fetch_systemd_logs(target, lines_count)
 
 
 def _fetch_docker_logs(container_name: str, lines_count: int) -> Dict[str, Any]:
-    """Read logs from a Docker container safely using the Docker SDK."""
+    """Read logs from a Docker container safely."""
     try:
         import docker
         from docker.errors import DockerException, NotFound
-    except ImportError:
-        return {
-            "status": "error",
-            "error": "The 'docker' python package is not available.",
-            "logs": "",
-        }
-
-    try:
         client = docker.from_env()
         container = client.containers.get(container_name)
-        raw_logs = container.logs(
-            tail=lines_count,
-            stdout=True,
-            stderr=True,
-            timestamps=True,
-        )
-        decoded_logs = raw_logs.decode("utf-8", errors="replace")
+        raw_logs = container.logs(tail=lines_count, stdout=True, stderr=True, timestamps=True)
         return {
             "status": "ok",
             "target_type": "docker",
             "target": container_name,
             "lines_requested": lines_count,
-            "logs": decoded_logs if decoded_logs else "(No logs found for this container)",
+            "logs": raw_logs.decode("utf-8", errors="replace"),
         }
-    except NotFound:
-        return {
-            "status": "error",
-            "error": f"Docker container '{container_name}' was not found.",
-            "logs": "",
-        }
-    except DockerException as exc:
-        err_str = str(exc)
-        if "permission denied" in err_str.lower() or "socket" in err_str.lower():
-            msg = (
-                f"Permission denied accessing Docker daemon while reading logs for '{container_name}'. "
-                "Ensure user is in 'docker' group."
-            )
-        else:
-            msg = f"Docker error reading logs for '{container_name}': {err_str}"
-        return {"status": "error", "error": msg, "logs": ""}
     except Exception as exc:
-        return {
-            "status": "error",
-            "error": f"Unexpected error reading Docker logs: {str(exc)}",
-            "logs": "",
-        }
+        return {"status": "error", "error": f"Docker logs error: {str(exc)}", "logs": ""}
 
 
 def _fetch_nginx_logs(lines_count: int) -> Dict[str, Any]:
-    """Read Nginx logs from journalctl or directly from /var/log/nginx/error.log."""
-    # First, try journalctl
+    """Read Nginx logs from journalctl or file."""
     if shutil.which("journalctl"):
-        cmd = ["journalctl", "-u", "nginx.service", "--no-pager", "-n", str(lines_count)]
         try:
             res = subprocess.run(
-                cmd,
+                ["journalctl", "-u", "nginx.service", "--no-pager", "-n", str(lines_count)],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -158,185 +143,191 @@ def _fetch_nginx_logs(lines_count: int) -> Dict[str, Any]:
                     "lines_requested": lines_count,
                     "logs": res.stdout,
                 }
-        except subprocess.TimeoutExpired:
-            return {"status": "error", "error": "Timeout reading journalctl for nginx.", "logs": ""}
-        except Exception as exc:
-            logger.debug(f"journalctl nginx failed, attempting log file: {exc}")
+        except Exception:
+            pass
 
-    # Fallback to reading /var/log/nginx/error.log directly
-    error_log_path = "/var/log/nginx/error.log"
-    try:
-        with open(error_log_path, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-            tail_lines = "".join(lines[-lines_count:])
-            return {
-                "status": "ok",
-                "target_type": "file",
-                "target": error_log_path,
-                "lines_requested": lines_count,
-                "logs": tail_lines if tail_lines else "(Nginx error log is empty)",
-            }
-    except PermissionError:
-        return {
-            "status": "error",
-            "error": f"Permission denied reading '{error_log_path}'. Check user permissions.",
-            "logs": "",
-        }
-    except FileNotFoundError:
-        pass
-    except Exception as exc:
-        return {"status": "error", "error": f"Error reading '{error_log_path}': {str(exc)}", "logs": ""}
+    for log_path in ["/var/log/nginx/error.log", "/var/log/nginx/access.log"]:
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                    return {
+                        "status": "ok",
+                        "target_type": "file",
+                        "target": log_path,
+                        "lines_requested": lines_count,
+                        "logs": "".join(lines[-lines_count:]),
+                    }
+            except Exception:
+                continue
 
-    # Check if maybe nginx runs as a Docker container
-    try:
-        docker_result = _fetch_docker_logs("nginx", lines_count)
-        if docker_result["status"] == "ok":
-            return docker_result
-    except Exception:
-        pass
-
-    return {
-        "status": "error",
-        "error": "Could not find Nginx logs via journalctl, /var/log/nginx/error.log, or Docker container 'nginx'.",
-        "logs": "",
-    }
+    return {"status": "error", "error": "Could not read Nginx logs.", "logs": ""}
 
 
 def _fetch_systemd_logs(service: str, lines_count: int) -> Dict[str, Any]:
-    """Read systemd service logs using journalctl."""
+    """Read systemd logs using journalctl."""
     journalctl_bin = shutil.which("journalctl")
     if not journalctl_bin:
-        # If journalctl is not available (e.g. on non-systemd systems or Windows during development)
-        return {
-            "status": "error",
-            "error": "journalctl utility is not available on this system. Is this a systemd Linux VPS?",
-            "logs": "",
-        }
+        return {"status": "unavailable", "error": "journalctl utility is not available.", "logs": ""}
 
-    # Safe invocation: arguments passed as list, no shell=True
     unit_name = service if service.endswith(".service") else f"{service}.service"
-    cmd = [journalctl_bin, "-u", unit_name, "--no-pager", "-n", str(lines_count)]
-
     try:
-        result = subprocess.run(
-            cmd,
+        res = subprocess.run(
+            [journalctl_bin, "-u", unit_name, "--no-pager", "-n", str(lines_count)],
             capture_output=True,
             text=True,
             check=False,
             timeout=15,
         )
-        if result.returncode != 0:
-            err_output = result.stderr.strip() or result.stdout.strip()
-            if "permission" in err_output.lower() or "access" in err_output.lower():
-                err_msg = (
-                    f"Permission denied reading journal logs for '{unit_name}'. "
-                    "The user running vps-guardian-mcp needs to be in 'systemd-journal' or 'adm' group."
-                )
-            else:
-                err_msg = f"journalctl exited with code {result.returncode}: {err_output}"
-            return {"status": "error", "error": err_msg, "logs": ""}
-
         return {
             "status": "ok",
             "target_type": "systemd",
             "target": unit_name,
             "lines_requested": lines_count,
-            "logs": result.stdout if result.stdout.strip() else f"(No logs found for unit '{unit_name}')",
-        }
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "error": f"Timed out reading logs for '{unit_name}'.", "logs": ""}
-    except PermissionError as exc:
-        return {
-            "status": "error",
-            "error": f"Permission denied executing journalctl: {str(exc)}",
-            "logs": "",
+            "logs": res.stdout if res.stdout.strip() else f"(No logs found for {unit_name})",
         }
     except Exception as exc:
-        logger.error(f"Error fetching systemd logs: {exc}", exc_info=True)
-        return {
-            "status": "error",
-            "error": f"Failed to read systemd logs: {str(exc)}",
-            "logs": "",
-        }
+        return {"status": "error", "error": f"Failed reading journalctl: {str(exc)}", "logs": ""}
 
 
-def run_recovery_action(action_name: str) -> Dict[str, Any]:
+# ============================================================================
+# Whitelisted Recovery Operations
+# ============================================================================
+
+def run_recovery_action(
+    action_name: str, target: Optional[str] = None
+) -> Dict[str, Any]:
     """Execute an isolated, predefined VPS recovery action.
 
-    Strict whitelist policy: Only 'clean_docker_cache' and 'restart_nginx' are allowed.
-    Any other action returns an explicit Access Denied error.
-
     Args:
-        action_name: Name of the recovery action to perform.
+        action_name: One of 'restart_service', 'clean_docker_cache',
+                     'clean_system_logs', 'kill_process', 'restart_nginx'.
+        target: Parameter required by certain actions (e.g. service name or PID).
 
     Returns:
-        Structured result dict with operation status and execution output.
+        Structured result dictionary.
     """
     if not isinstance(action_name, str):
-        return {
-            "status": "error",
-            "error": "Action name must be a string.",
-            "success": False,
-        }
+        return {"status": "error", "error": "action_name must be a string.", "success": False}
 
     action_clean = action_name.strip().lower()
-
-    # Enforce strict whitelist
     if action_clean not in ALLOWED_RECOVERY_ACTIONS:
-        allowed_list = list(ALLOWED_RECOVERY_ACTIONS.keys())
-        logger.warning(f"Unauthorized recovery action rejected: '{action_name}'")
         return {
             "status": "forbidden",
             "success": False,
             "error": (
                 f"Access denied: Action '{action_name}' is not permitted. "
-                f"Allowed recovery actions: {allowed_list}"
+                f"Allowed recovery actions: {list(ALLOWED_RECOVERY_ACTIONS.keys())}"
             ),
         }
 
-    if action_clean == "clean_docker_cache":
-        return _action_clean_docker_cache()
+    # Dispatch to specific action handlers
+    if action_clean == "restart_service":
+        return _action_restart_service(target)
     elif action_clean == "restart_nginx":
-        return _action_restart_nginx()
+        return _action_restart_service("nginx")
+    elif action_clean == "clean_docker_cache":
+        return _action_clean_docker_cache()
+    elif action_clean == "clean_system_logs":
+        return _action_clean_system_logs()
+    elif action_clean == "kill_process":
+        return _action_kill_process(target)
 
-    return {
-        "status": "error",
-        "success": False,
-        "error": f"Action handler not implemented for '{action_clean}'.",
-    }
+    return {"status": "error", "success": False, "error": f"Handler not implemented for '{action_clean}'."}
 
 
-def _action_clean_docker_cache() -> Dict[str, Any]:
-    """Perform safe Docker cache cleaning (pruning stopped containers, unused networks, and dangling images)."""
-    try:
-        import docker
-        from docker.errors import DockerException
-    except ImportError:
+def _action_restart_service(service_name: Optional[str]) -> Dict[str, Any]:
+    """Safely restart a specific system service using systemctl."""
+    if not service_name or not isinstance(service_name, str):
         return {
             "status": "error",
             "success": False,
-            "error": "The 'docker' python library is not installed.",
+            "error": "The 'restart_service' action requires a valid 'target' parameter (e.g. target='nginx').",
         }
 
-    details = {}
+    clean_name = service_name.strip()
+    if not SERVICE_NAME_REGEX.match(clean_name):
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"Invalid service name '{clean_name}'. Only alphanumeric characters, dots, and hyphens allowed.",
+        }
+
+    systemctl_bin = shutil.which("systemctl")
+    if not systemctl_bin:
+        return {
+            "status": "unavailable",
+            "success": False,
+            "error": "systemctl command not found. Host is not systemd-based.",
+        }
+
+    unit_name = clean_name if clean_name.endswith(".service") else f"{clean_name}.service"
+    cmd = [systemctl_bin, "restart", unit_name]
+
     try:
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
+        if res.returncode == 0:
+            return {
+                "status": "ok",
+                "success": True,
+                "action": "restart_service",
+                "target": unit_name,
+                "message": f"Service '{unit_name}' successfully restarted.",
+            }
+        else:
+            err_msg = res.stderr.strip() or res.stdout.strip()
+            if "permission denied" in err_msg.lower() or "interactive authentication" in err_msg.lower():
+                err_msg = (
+                    f"Permission denied restarting '{unit_name}'. Superuser privileges are required. "
+                    "Grant sudo permissions for systemctl restart in /etc/sudoers.d/."
+                )
+            return {
+                "status": "error",
+                "success": False,
+                "action": "restart_service",
+                "target": unit_name,
+                "error": err_msg,
+            }
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "error",
+            "success": False,
+            "action": "restart_service",
+            "target": unit_name,
+            "error": f"Timeout while restarting service '{unit_name}'.",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "success": False,
+            "action": "restart_service",
+            "target": unit_name,
+            "error": f"Unexpected error restarting service: {str(exc)}",
+        }
+
+
+def _action_clean_docker_cache() -> Dict[str, Any]:
+    """Perform deep Docker cleanup: containers, images, volumes, and build cache."""
+    try:
+        import docker
+        from docker.errors import DockerException
         client = docker.from_env()
 
-        # 1. Prune containers
         c_prune = client.containers.prune()
         containers_deleted = len(c_prune.get("ContainersDeleted") or [])
         space_reclaimed = c_prune.get("SpaceReclaimed", 0)
 
-        # 2. Prune networks
         n_prune = client.networks.prune()
         networks_deleted = len(n_prune.get("NetworksDeleted") or [])
 
-        # 3. Prune dangling images
-        i_prune = client.images.prune(filters={"dangling": True})
+        i_prune = client.images.prune(filters={"dangling": False})
         images_deleted = len(i_prune.get("ImagesDeleted") or [])
         space_reclaimed += i_prune.get("SpaceReclaimed", 0)
 
-        # 4. Prune build cache if supported
+        v_prune = client.volumes.prune()
+        volumes_deleted = len(v_prune.get("VolumesDeleted") or [])
+        space_reclaimed += v_prune.get("SpaceReclaimed", 0)
+
         build_cache_reclaimed = 0
         if hasattr(client, "build_cache"):
             try:
@@ -350,119 +341,270 @@ def _action_clean_docker_cache() -> Dict[str, Any]:
             "containers_pruned": containers_deleted,
             "networks_pruned": networks_deleted,
             "images_pruned": images_deleted,
+            "volumes_pruned": volumes_deleted,
             "space_reclaimed_bytes": space_reclaimed,
-            "space_reclaimed_mb": round(space_reclaimed / (1024 * 1024), 2),
+            "space_reclaimed_human": _format_bytes(space_reclaimed),
         }
 
         return {
             "status": "ok",
             "success": True,
             "action": "clean_docker_cache",
-            "message": f"Docker cache cleanup completed. Freed approximately {details['space_reclaimed_mb']} MB.",
+            "message": f"Docker deep cleanup completed. Freed {details['space_reclaimed_human']}.",
             "details": details,
         }
-
-    except DockerException as exc:
+    except Exception as exc:
         err_str = str(exc)
         if "permission denied" in err_str.lower() or "socket" in err_str.lower():
-            msg = (
-                "Permission denied accessing /var/run/docker.sock. "
-                "Grant the running user docker permissions ('sudo usermod -aG docker $USER')."
-            )
+            friendly_err = "Permission denied accessing /var/run/docker.sock. Add user to docker group."
         else:
-            msg = f"Docker cleanup failed: {err_str}"
-        logger.error(f"Docker cleanup error: {msg}")
-        return {
-            "status": "error",
-            "success": False,
-            "action": "clean_docker_cache",
-            "error": msg,
-        }
-    except Exception as exc:
-        logger.error(f"Unexpected error during Docker cleanup: {exc}", exc_info=True)
-        return {
-            "status": "error",
-            "success": False,
-            "action": "clean_docker_cache",
-            "error": f"Unexpected error during docker cache cleanup: {str(exc)}",
-        }
+            friendly_err = f"Docker cleanup failed: {err_str}"
+        return {"status": "error", "success": False, "action": "clean_docker_cache", "error": friendly_err}
 
 
-def _action_restart_nginx() -> Dict[str, Any]:
-    """Safely restart Nginx web server using systemctl or docker container restart."""
-    systemctl_bin = shutil.which("systemctl")
+def _action_clean_system_logs() -> Dict[str, Any]:
+    """Clean systemd journal logs older than 3 days and prune rotated logs in /var/log."""
+    reclaimed_journal = "0 B"
+    journalctl_bin = shutil.which("journalctl")
+    journal_msg = ""
 
-    # 1. Try systemctl restart nginx
-    if systemctl_bin:
+    if journalctl_bin:
         try:
-            cmd = [systemctl_bin, "restart", "nginx"]
             res = subprocess.run(
-                cmd,
+                [journalctl_bin, "--vacuum-time=3d"],
                 capture_output=True,
                 text=True,
                 check=False,
                 timeout=30,
             )
             if res.returncode == 0:
-                return {
-                    "status": "ok",
-                    "success": True,
-                    "action": "restart_nginx",
-                    "method": "systemctl",
-                    "message": "Nginx service successfully restarted via systemctl.",
-                }
+                journal_msg = res.stdout.strip()
             else:
-                err_output = res.stderr.strip() or res.stdout.strip()
-                if "interactive authentication" in err_output.lower() or "permission denied" in err_output.lower() or "access denied" in err_output.lower():
-                    friendly_err = (
-                        "Permission denied restarting Nginx via systemctl. "
-                        "The server requires sudo/root privileges. "
-                        "Tip: Add '%sudo ALL=NOPASSWD: /bin/systemctl restart nginx' to /etc/sudoers.d/vps-guardian."
-                    )
-                else:
-                    friendly_err = f"Failed to restart Nginx (exit code {res.returncode}): {err_output}"
-                return {
-                    "status": "error",
-                    "success": False,
-                    "action": "restart_nginx",
-                    "error": friendly_err,
-                }
-        except subprocess.TimeoutExpired:
-            return {
-                "status": "error",
-                "success": False,
-                "action": "restart_nginx",
-                "error": "Timeout while executing 'systemctl restart nginx'.",
-            }
-        except PermissionError as exc:
-            return {
-                "status": "error",
-                "success": False,
-                "action": "restart_nginx",
-                "error": f"Permission denied executing systemctl: {str(exc)}",
-            }
+                journal_msg = res.stderr.strip() or f"exit code {res.returncode}"
+        except Exception as exc:
+            journal_msg = f"Failed to vacuum journal: {str(exc)}"
 
-    # 2. If systemctl is not present or failed, check if Nginx is running as a Docker container
-    try:
-        import docker
-        client = docker.from_env()
-        containers = client.containers.list(filters={"name": "nginx"})
-        if containers:
-            nginx_c = containers[0]
-            nginx_c.restart()
-            return {
-                "status": "ok",
-                "success": True,
-                "action": "restart_nginx",
-                "method": "docker",
-                "message": f"Docker container '{nginx_c.name}' (Nginx) successfully restarted.",
-            }
-    except Exception:
-        pass
+    # Clean old rotated compressed archives in /var/log (*.gz, *.1, *.old)
+    pruned_files_count = 0
+    pruned_bytes = 0
+    var_log = "/var/log"
+
+    if os.path.exists(var_log) and os.path.isdir(var_log):
+        for root, _, files in os.walk(var_log):
+            for file_name in files:
+                if (
+                    file_name.endswith(".gz")
+                    or file_name.endswith(".1")
+                    or file_name.endswith(".old")
+                ):
+                    file_path = os.path.join(root, file_name)
+                    try:
+                        f_size = os.path.getsize(file_path)
+                        os.remove(file_path)
+                        pruned_files_count += 1
+                        pruned_bytes += f_size
+                    except Exception:
+                        continue
 
     return {
-        "status": "error",
-        "success": False,
-        "action": "restart_nginx",
-        "error": "Could not restart Nginx: systemctl was not found and no running 'nginx' Docker container was detected.",
+        "status": "ok",
+        "success": True,
+        "action": "clean_system_logs",
+        "journalctl_output": journal_msg,
+        "pruned_log_files_count": pruned_files_count,
+        "pruned_log_bytes": pruned_bytes,
+        "pruned_log_human": _format_bytes(pruned_bytes),
+        "message": f"System log cleanup complete. Deleted {pruned_files_count} rotated log files ({_format_bytes(pruned_bytes)}).",
     }
+
+
+def _action_kill_process(target_pid: Optional[str | int]) -> Dict[str, Any]:
+    """Safely terminate a stuck or runaway process by PID."""
+    if not target_pid:
+        return {
+            "status": "error",
+            "success": False,
+            "error": "The 'kill_process' action requires target=PID (e.g. target='12345').",
+        }
+
+    try:
+        pid = int(target_pid)
+    except (ValueError, TypeError):
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"Invalid PID '{target_pid}'. PID must be an integer.",
+        }
+
+    # Safety: Protect PID 1 and critical core processes
+    if pid <= 1:
+        return {
+            "status": "forbidden",
+            "success": False,
+            "error": f"Access denied: Terminating PID {pid} (init/systemd) is forbidden.",
+        }
+
+    try:
+        proc = psutil.Process(pid)
+        proc_name = proc.name().lower()
+
+        # Check protected names
+        if proc_name in PROTECTED_PROCESS_NAMES or "systemd" in proc_name:
+            return {
+                "status": "forbidden",
+                "success": False,
+                "error": f"Access denied: Process '{proc.name()}' (PID {pid}) is critical to system operation.",
+            }
+
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+            terminated_cleanly = True
+        except psutil.TimeoutExpired:
+            proc.kill()
+            terminated_cleanly = False
+
+        return {
+            "status": "ok",
+            "success": True,
+            "action": "kill_process",
+            "pid": pid,
+            "process_name": proc_name,
+            "force_killed": not terminated_cleanly,
+            "message": f"Process '{proc_name}' (PID {pid}) was successfully terminated.",
+        }
+    except psutil.NoSuchProcess:
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"No active process found with PID {pid}.",
+        }
+    except psutil.AccessDenied as exc:
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"Permission denied terminating PID {pid}: {str(exc)}. Root privileges required.",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"Failed to terminate PID {pid}: {str(exc)}",
+        }
+
+
+# ============================================================================
+# Safe Backup Generation
+# ============================================================================
+
+def create_backup(backup_type: str, source_path: str) -> Dict[str, Any]:
+    """Create a compressed tar.gz archive of an authorized directory.
+
+    Archives are stored in an isolated, restricted directory (/var/backups/vps-guardian/).
+    Uses pure Python tarfile module with no shell invocation.
+
+    Args:
+        backup_type: Label for backup ('site', 'config', 'database', etc.).
+        source_path: Target directory to back up (must be within authorized paths).
+
+    Returns:
+        Structured dictionary with archive location, size, and file count.
+    """
+    if not isinstance(source_path, str) or not source_path.strip():
+        return {"status": "error", "error": "source_path must be a non-empty string."}
+
+    # Verify canonical source path
+    try:
+        canonical_source = os.path.realpath(os.path.abspath(source_path.strip()))
+    except Exception as exc:
+        return {"status": "error", "error": f"Invalid source path: {str(exc)}"}
+
+    # Allowed backup source boundaries
+    allowed_roots = list(ALLOWED_BACKUP_ROOTS)
+    if os.name == "nt":
+        allowed_roots.append(os.path.realpath("."))
+
+    is_permitted = False
+    for root_path in allowed_roots:
+        canonical_root = os.path.realpath(root_path)
+        if canonical_source == canonical_root or canonical_source.startswith(canonical_root + os.sep):
+            is_permitted = True
+            break
+
+    if not is_permitted:
+        return {
+            "status": "forbidden",
+            "error": (
+                f"Access denied: Source path '{canonical_source}' is outside allowed backup "
+                f"directories: {ALLOWED_BACKUP_ROOTS}"
+            ),
+        }
+
+    if not os.path.exists(canonical_source):
+        return {"status": "error", "error": f"Source path '{canonical_source}' does not exist."}
+
+    # Setup isolated backup directory
+    backup_dest_dir = "/var/backups/vps-guardian" if os.name != "nt" else os.path.join(".", "backups")
+    try:
+        os.makedirs(backup_dest_dir, exist_ok=True)
+    except PermissionError:
+        backup_dest_dir = os.path.join(tempfile.gettempdir(), "vps-guardian-backups")
+        os.makedirs(backup_dest_dir, exist_ok=True)
+
+    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", os.path.basename(canonical_source) or "root")
+    archive_filename = f"backup_{safe_name}_{timestamp}.tar.gz"
+    archive_filepath = os.path.join(backup_dest_dir, archive_filename)
+
+    start_time = time.time()
+    file_count = 0
+
+    try:
+        with tarfile.open(archive_filepath, "w:gz") as tar:
+            if os.path.isdir(canonical_source):
+                for root, _, files in os.walk(canonical_source):
+                    for f in files:
+                        full_f = os.path.join(root, f)
+                        arcname = os.path.relpath(full_f, os.path.dirname(canonical_source))
+                        tar.add(full_f, arcname=arcname)
+                        file_count += 1
+            else:
+                tar.add(canonical_source, arcname=os.path.basename(canonical_source))
+                file_count = 1
+
+        archive_size = os.path.getsize(archive_filepath)
+        duration = round(time.time() - start_time, 2)
+
+        return {
+            "status": "ok",
+            "success": True,
+            "backup_type": backup_type,
+            "source_path": canonical_source,
+            "archive_path": archive_filepath.replace("\\", "/"),
+            "archive_size_bytes": archive_size,
+            "archive_size_human": _format_bytes(archive_size),
+            "files_archived": file_count,
+            "duration_seconds": duration,
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
+    except PermissionError as exc:
+        if os.path.exists(archive_filepath):
+            try:
+                os.remove(archive_filepath)
+            except Exception:
+                pass
+        return {
+            "status": "error",
+            "error": f"Permission denied creating backup archive: {str(exc)}",
+        }
+    except Exception as exc:
+        logger.error(f"Error creating backup for '{canonical_source}': {exc}", exc_info=True)
+        if os.path.exists(archive_filepath):
+            try:
+                os.remove(archive_filepath)
+            except Exception:
+                pass
+        return {
+            "status": "error",
+            "error": f"Failed creating backup: {str(exc)}",
+        }

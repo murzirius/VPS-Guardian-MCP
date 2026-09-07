@@ -8,7 +8,7 @@ Exposes safe, isolated tools for:
 - Docker management: List containers, inspect container logs, live resource statistics.
 - Network & firewall: Discover open/listening ports and audit UFW firewall rules.
 - File & config management: Whitelisted file viewing, atomic writing with backups, directory inspection.
-- Emergency recovery: Whitelisted recovery actions.
+- Emergency recovery & backups: Whitelisted service restarts, cache/log cleanups, process termination, tar.gz backups.
 """
 
 from __future__ import annotations
@@ -55,7 +55,10 @@ try:
         get_open_ports as _get_open_ports,
         get_ufw_status as _get_ufw_status,
     )
-    from src.recover import run_recovery_action as _run_recovery_action
+    from src.recover import (
+        create_backup as _create_backup,
+        run_recovery_action as _run_recovery_action,
+    )
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -78,7 +81,10 @@ except ImportError:
         get_open_ports as _get_open_ports,
         get_ufw_status as _get_ufw_status,
     )
-    from recover import run_recovery_action as _run_recovery_action
+    from recover import (
+        create_backup as _create_backup,
+        run_recovery_action as _run_recovery_action,
+    )
 
 # Initialize FastMCP Server
 mcp = FastMCP(
@@ -355,24 +361,54 @@ def list_directory(dir_path: str, max_depth: int = 1) -> str:
 
 
 # ============================================================================
-# 5. Emergency Recovery Tools
+# 5. Emergency Recovery & Backup Tools
 # ============================================================================
 
 @mcp.tool()
-def execute_recovery(action_name: str) -> str:
+def execute_recovery(action_name: str, target: Optional[str] = None) -> str:
     """Execute an emergency recovery operation from a strictly whitelisted list.
 
     Allowed actions:
-    - 'clean_docker_cache': Prunes unused containers, networks, and images.
-    - 'restart_nginx': Safely restarts the Nginx web server.
+    - 'restart_service': Restarts a systemd service (requires target=service_name, e.g. target='nginx').
+    - 'clean_docker_cache': Deep prune of unused containers, networks, images, and volumes.
+    - 'clean_system_logs': Prunes journal logs older than 3 days and rotated archives in /var/log.
+    - 'kill_process': Terminates a runaway process by PID (requires target=PID, e.g. target='12345').
+    - 'restart_nginx': Restarts Nginx web server (legacy alias for restart_service target='nginx').
 
-    Any unapproved command will be rejected with an access denied error.
+    Args:
+        action_name: The exact recovery action to execute.
+        target: Optional target parameter required by 'restart_service' and 'kill_process'.
+
+    Returns:
+        JSON string with operation outcome, freed resources, or security error.
     """
     try:
-        data = _run_recovery_action(action_name=action_name)
+        data = _run_recovery_action(action_name=action_name, target=target)
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in execute_recovery: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def create_backup(backup_type: str, source_path: str) -> str:
+    """Create a compressed tar.gz archive of an authorized website or configuration directory.
+
+    Archives are saved into an isolated backup repository (/var/backups/vps-guardian/).
+    Permitted source locations: /var/www/, /etc/nginx/, /etc/mysql/, /etc/postgresql/, /etc/docker/, /etc/caddy/
+
+    Args:
+        backup_type: Identifier label for the archive (e.g. 'site', 'config', 'data').
+        source_path: Target directory to archive.
+
+    Returns:
+        JSON string with archive file path, size, file count, and duration.
+    """
+    try:
+        data = _create_backup(backup_type=backup_type, source_path=source_path)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in create_backup: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
 
 
