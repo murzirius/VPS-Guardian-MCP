@@ -4,10 +4,10 @@
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%202024--11--05-green.svg)](https://modelcontextprotocol.io/)
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
-[![Tools Count](https://img.shields.io/badge/Tools-21%20Active-brightgreen.svg)](#-tools-reference)
+[![Tools Count](https://img.shields.io/badge/Tools-26%20Active-brightgreen.svg)](#-tools-reference)
 [![Updates](https://img.shields.io/badge/Changelog-UPDATES.md-informational.svg)](UPDATES.md)
 
-A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, and isolated emergency recovery.
+A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, storage diagnostics, scheduled task inspection, OS patch auditing, and isolated emergency recovery.
 
 It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structured, programmatic tools to inspect server health and resolve infrastructure issues without raw shell access or unconstrained root privileges.
 
@@ -17,10 +17,10 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.6.0` (See [UPDATES.md](UPDATES.md)) |
-| **Active MCP Tools** | **21 tools** |
-| **MCP Resources** | `vps://system-overview` |
-| **MCP Prompts** | `triage_server_incident` |
+| **Version** | `0.7.0` (See [UPDATES.md](UPDATES.md)) |
+| **Active MCP Tools** | **26 tools** |
+| **MCP Resources** | `vps://system-overview` (Live ambient telemetry with update alerts) |
+| **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit` |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch Linux) |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -61,12 +61,27 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 - **`get_fail2ban_status`**: Audits Fail2ban service status, active protection jails, and banned IP registries.
 - **`audit_ssh_config`**: Analyzes `/etc/ssh/sshd_config` against hardening guidelines (password auth, root login, port configurations) with a security score (0-100).
 
-### 7. 🔧 Emergency Recovery & Backups (`src/recover.py`)
+### 7. 💾 Storage & Disk Usage Diagnostics (`src/storage.py`)
+- **`analyze_disk_usage`**: Recursively audits directories for high disk usage without following symlinks or descending into pseudo-filesystems (`/proc`, `/sys`, `/dev`, `/run`). Identifies the largest space consumers and files with humanized size formatting.
+
+### 8. ⏰ Scheduler & Automation Auditing (`src/scheduler.py`)
+- **`list_cron_jobs`**: Scans `/etc/crontab`, modular `/etc/cron.d/`, standard cron intervals (`daily`, `hourly`, `weekly`, `monthly`), and user crontabs with human-friendly schedule translations.
+- **`list_systemd_timers`**: Audits active and pending systemd timers, reporting triggers, countdowns, and target service activations.
+
+### 9. 🔄 System Updates & Self-Version Verification (`src/updates.py`)
+- **`check_system_updates`**: Audits available operating system packages, flags unpatched security CVE updates, and detects kernel reboot requirements (`/var/run/reboot-required`). Generates prominent alerts for AI agents.
+- **`check_guardian_updates`**: Verifies local installation against the upstream GitHub repository to alert operators when a newer version or commit is available.
+
+### 10. 🔧 Emergency Recovery & Backups (`src/recover.py`)
 - **`execute_recovery`**: Executes strictly whitelisted administrative recovery operations:
   - `restart_service`: Restarts target systemd services with strict identifier validation.
   - `clean_docker_cache`: Performs a deep prune of dangling/unused images, stopped containers, networks, and build caches.
   - `clean_system_logs`: Vacuums systemd journal logs older than 3 days and prunes rotated log archives in `/var/log`.
   - `kill_process`: Terminates stuck runaway processes by PID while enforcing protections for PID 1, init, and core system daemons.
+  - `vacuum_systemd_journal`: Safely prunes systemd journal logs to a target size threshold (e.g. `200M`).
+  - `clean_package_cache`: Cleans APT archive cache and purges obsolete packages (`apt-get clean && apt-get autoremove`).
+  - `apply_security_updates`: Safely applies pending operating system security patches non-interactively.
+  - `update_guardian`: Automatically updates VPS-Guardian-MCP from GitHub and refreshes the virtual environment.
 - **`create_backup`**: Creates standalone `.tar.gz` compressed archives of authorized directories inside an isolated backup repository (`/var/backups/vps-guardian/`).
 
 ---
@@ -79,7 +94,8 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 2. **Follow the Principle of Least Privilege**: Use read-only diagnostic tools first before suggesting or applying changes.
 3. **Verify Configurations Before Reloading**: When modifying web server configurations, always execute `test_nginx_config` prior to invoking `execute_recovery(action_name='restart_service', target='nginx')`.
 4. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
-5. **Require Confirmation for State-Changing Operations**: Any recovery or file modification action (`execute_recovery`, `write_file_content`, `create_backup`) must be explicitly confirmed with the operator prior to execution.
+5. **Promptly Surface Critical Alerts**: When `check_system_updates` or `vps://system-overview` flags pending security patches or reboot requirements, prioritize alerting the operator and proposing remediation.
+6. **Require Confirmation for State-Changing Operations**: Any recovery or file modification action (`execute_recovery`, `write_file_content`, `create_backup`) must be explicitly confirmed with the operator prior to execution.
 
 ---
 
@@ -88,15 +104,18 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package initialization
-│   ├── server.py            # FastMCP server, resources, prompts, and tool registry (21 tools)
+│   ├── __init__.py          # Package version (v0.7.0)
+│   ├── server.py            # FastMCP server, resources, prompts, and tool registry (26 tools)
 │   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
 │   ├── docker_manager.py    # Container inventory, logs, and live telemetry
 │   ├── network.py           # Listening ports, bound processes, and UFW rules
 │   ├── files.py             # Whitelisted config viewer, atomic writer, directory inspector
 │   ├── web.py               # Nginx syntax verification, SSL checks, virtual host listing
 │   ├── security.py          # Failed logins, Fail2ban status, SSH configuration audit
-│   └── recover.py           # Systemd restarts, cache/log pruners, process killer, tar.gz backups
+│   ├── storage.py           # Disk usage analyzer and space hog finder
+│   ├── scheduler.py         # Cron schedules and systemd timers inspection
+│   ├── updates.py           # OS security patch auditor and guardian self-version checker
+│   └── recover.py           # Service restarts, cache/log pruners, process killer, tar.gz backups
 ├── pyproject.toml           # Package configuration and dependencies
 ├── LICENSE                  # MIT License (2026, murzirius)
 ├── .gitignore               # Ignored environments, builds, and caches
@@ -185,7 +204,12 @@ Configure your MCP client (Antigravity `mcp_config.json` or Claude Desktop `clau
 | `check_failed_logins` | `limit` (*int*, default: *20*) | Surfaces recent failed SSH logins and top offending attacker IPs |
 | `get_fail2ban_status` | *none* | Queries Fail2ban operational status, active jails, and banned IPs |
 | `audit_ssh_config` | *none* | Audits `/etc/ssh/sshd_config` security settings with scoring (0-100) |
-| `execute_recovery` | `action_name` (*string*), `target` (*string*, optional) | Executes whitelisted operations (`restart_service`, `clean_docker_cache`, `clean_system_logs`, `kill_process`) |
+| `analyze_disk_usage` | `target_path` (*string*), `max_depth` (*int*), `min_size_mb` (*int*), `top_n` (*int*) | Identifies largest directories and files consuming disk space |
+| `list_cron_jobs` | *none* | Audits scheduled cron jobs across system, drop-ins, and user crontabs |
+| `list_systemd_timers` | *none* | Audits systemd timers with next trigger, elapsed, and active units |
+| `check_system_updates` | *none* | Audits available OS package upgrades, security CVE patches, and reboot status |
+| `check_guardian_updates` | *none* | Compares current VPS-Guardian version/commit with upstream GitHub release |
+| `execute_recovery` | `action_name` (*string*), `target` (*string*, optional) | Executes whitelisted operations (`restart_service`, `clean_docker_cache`, `clean_system_logs`, `kill_process`, `vacuum_systemd_journal`, `clean_package_cache`, `apply_security_updates`, `update_guardian`) |
 | `create_backup` | `backup_type` (*string*), `source_path` (*string*) | Generates isolated `.tar.gz` archives in `/var/backups/vps-guardian/` |
 
 ---

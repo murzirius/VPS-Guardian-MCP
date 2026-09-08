@@ -68,6 +68,17 @@ try:
         check_failed_logins as _check_failed_logins,
         get_fail2ban_status as _get_fail2ban_status,
     )
+    from src.storage import (
+        analyze_disk_usage as _analyze_disk_usage,
+    )
+    from src.scheduler import (
+        list_cron_jobs as _list_cron_jobs,
+        list_systemd_timers as _list_systemd_timers,
+    )
+    from src.updates import (
+        check_guardian_updates as _check_guardian_updates,
+        check_system_updates as _check_system_updates,
+    )
     from src.recover import (
         create_backup as _create_backup,
         run_recovery_action as _run_recovery_action,
@@ -103,6 +114,17 @@ except ImportError:
         audit_ssh_config as _audit_ssh_config,
         check_failed_logins as _check_failed_logins,
         get_fail2ban_status as _get_fail2ban_status,
+    )
+    from storage import (
+        analyze_disk_usage as _analyze_disk_usage,
+    )
+    from scheduler import (
+        list_cron_jobs as _list_cron_jobs,
+        list_systemd_timers as _list_systemd_timers,
+    )
+    from updates import (
+        check_guardian_updates as _check_guardian_updates,
+        check_system_updates as _check_system_updates,
     )
     from recover import (
         create_backup as _create_backup,
@@ -485,7 +507,118 @@ def audit_ssh_config() -> str:
 
 
 # ============================================================================
-# 7. Emergency Recovery & Backup Tools
+# 7. Storage & Scheduled Tasks Tools
+# ============================================================================
+
+@mcp.tool()
+def analyze_disk_usage(
+    target_path: str = "/var",
+    max_depth: int = 2,
+    min_size_mb: int = 50,
+    top_n: int = 15,
+) -> str:
+    """Analyze disk usage for a directory to discover space bottlenecks and large files.
+
+    Safely walks the filesystem without following symlinks and automatically skips
+    virtual pseudo-filesystems (/proc, /sys, /dev, /run).
+
+    Args:
+        target_path: Starting path to inspect (defaults to '/var').
+        max_depth: Depth of directory nesting to inspect (1 to 5, default 2).
+        min_size_mb: Minimum size threshold in megabytes to include (default 50 MB).
+        top_n: Maximum number of largest items to return (1 to 50, default 15).
+
+    Returns:
+        JSON string with partition usage, largest directories, and largest files.
+    """
+    try:
+        data = _analyze_disk_usage(
+            target_path=target_path,
+            max_depth=max_depth,
+            min_size_mb=min_size_mb,
+            top_n=top_n,
+        )
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in analyze_disk_usage: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def list_cron_jobs() -> str:
+    """Discover all scheduled cron jobs on the Linux system.
+
+    Audits /etc/crontab, /etc/cron.d/, /etc/cron.* periodic scripts, and user crontabs.
+
+    Returns:
+        JSON string containing scheduled jobs with user, schedule expression,
+        human-readable timing explanation, and command.
+    """
+    try:
+        data = _list_cron_jobs()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in list_cron_jobs: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def list_systemd_timers() -> str:
+    """Audit active and pending systemd timers via 'systemctl list-timers'.
+
+    Returns:
+        JSON string with timer unit names, next execution time, countdown, and target services.
+    """
+    try:
+        data = _list_systemd_timers()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in list_systemd_timers: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 8. Updates & Server Maintenance Tools
+# ============================================================================
+
+@mcp.tool()
+def check_system_updates() -> str:
+    """Audit available operating system package updates and pending security patches.
+
+    Checks reboot requirements (/var/run/reboot-required), total upgradable packages,
+    and security CVE patches. Generates high-priority warnings for AI agents.
+
+    Returns:
+        JSON string with update counts, security status, reboot flag, and recommended recovery action.
+    """
+    try:
+        data = _check_system_updates()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in check_system_updates: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def check_guardian_updates() -> str:
+    """Check if a newer version or commit of VPS-Guardian-MCP is available on GitHub.
+
+    Provides automated version verification and action guidance for self-updating.
+
+    Returns:
+        JSON string with current version, latest commit, update availability,
+        and AI warning notice.
+    """
+    try:
+        data = _check_guardian_updates()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in check_guardian_updates: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 9. Emergency Recovery & Backup Tools
 # ============================================================================
 
 @mcp.tool()
@@ -498,10 +631,14 @@ def execute_recovery(action_name: str, target: Optional[str] = None) -> str:
     - 'clean_system_logs': Prunes journal logs older than 3 days and rotated archives in /var/log.
     - 'kill_process': Terminates a runaway process by PID (requires target=PID, e.g. target='12345').
     - 'restart_nginx': Restarts Nginx web server (legacy alias for restart_service target='nginx').
+    - 'vacuum_systemd_journal': Truncates journal logs to limit (target defaults to '200M').
+    - 'clean_package_cache': Cleans APT archive cache and removes obsolete packages.
+    - 'apply_security_updates': Non-interactively applies pending operating system security updates.
+    - 'update_guardian': Self-updates VPS-Guardian-MCP from GitHub and refreshes virtual environment.
 
     Args:
         action_name: The exact recovery action to execute.
-        target: Optional target parameter required by 'restart_service' and 'kill_process'.
+        target: Optional target parameter required by certain actions.
 
     Returns:
         JSON string with operation outcome, freed resources, or security error.
@@ -537,14 +674,27 @@ def create_backup(backup_type: str, source_path: str) -> str:
 
 
 # ============================================================================
-# 8. MCP Resources & Prompts
+# 10. MCP Resources & Prompts
 # ============================================================================
 
 @mcp.resource("vps://system-overview")
 def get_system_overview_resource() -> str:
-    """Live JSON resource providing continuous system snapshot for AI context."""
+    """Live JSON resource providing continuous system snapshot and update alerts for AI context."""
     try:
-        return json.dumps(_get_system_health(), indent=2, ensure_ascii=False)
+        health_data = _get_system_health()
+        # Add live update and reboot status alerts for agent awareness
+        try:
+            updates_info = _check_system_updates()
+            health_data["system_updates"] = {
+                "reboot_required": updates_info.get("reboot_required", False),
+                "security_updates_count": updates_info.get("security_updates_count", 0),
+                "total_upgradable": updates_info.get("total_upgradable", 0),
+                "warning": updates_info.get("warning"),
+            }
+        except Exception:
+            pass
+
+        return json.dumps(health_data, indent=2, ensure_ascii=False)
     except Exception as exc:
         return json.dumps({"status": "error", "error": str(exc)})
 
@@ -559,6 +709,34 @@ def triage_server_incident_prompt() -> str:
         "3. If services are degraded, call `read_service_logs` with grep_filter='ERROR' to pinpoint the failure.\n"
         "4. Call `check_failed_logins` and `get_open_ports` to rule out security anomalies or port conflicts.\n"
         "5. Formulate a safe recovery plan and present it to the operator before executing changes."
+    )
+
+
+@mcp.prompt("emergency_disk_cleanup")
+def emergency_disk_cleanup_prompt() -> str:
+    """Guidance prompt for resolving low disk space emergency on the VPS."""
+    return (
+        "You are a DevOps engineer responding to a disk space emergency (>90% full):\n"
+        "1. Call `analyze_disk_usage` with target_path='/var' to identify runaway logs, cache, or docker data.\n"
+        "2. Call `get_docker_stats` and `list_docker_containers` to evaluate container storage.\n"
+        "3. Review available cleanup actions: `clean_system_logs`, `vacuum_systemd_journal`, `clean_docker_cache`, `clean_package_cache`.\n"
+        "4. Formulate the cleanup plan and propose it to the operator before triggering `execute_recovery`.\n"
+        "5. After recovery, verify recovered disk capacity with `get_system_health`."
+    )
+
+
+@mcp.prompt("security_and_update_audit")
+def security_and_update_audit_prompt() -> str:
+    """Comprehensive routine for auditing VPS security, CVE updates, and authentication logs."""
+    return (
+        "You are a Cybersecurity and Linux Hardening Auditor:\n"
+        "1. Check pending CVEs and kernel reboot status with `check_system_updates`.\n"
+        "2. Audit SSH server configuration vulnerabilities with `audit_ssh_config`.\n"
+        "3. Inspect intrusion attempts and active bans with `check_failed_logins` and `get_fail2ban_status`.\n"
+        "4. Audit network attack surface with `get_open_ports` and `get_ufw_status`.\n"
+        "5. Verify background automation integrity with `list_cron_jobs` and `list_systemd_timers`.\n"
+        "6. Check VPS-Guardian version currency with `check_guardian_updates`.\n"
+        "7. Compile an audit summary with risk ratings and remediation actions."
     )
 
 

@@ -33,6 +33,10 @@ ALLOWED_RECOVERY_ACTIONS = {
     "clean_system_logs": "Prunes old systemd journal entries (>3 days) and rotated archived logs in /var/log.",
     "kill_process": "Terminates a runaway or stuck process (requires target=PID).",
     "restart_nginx": "Safely restarts the Nginx web server service (alias for restart_service target=nginx).",
+    "vacuum_systemd_journal": "Reduces systemd journal size to limit (target defaults to '200M').",
+    "clean_package_cache": "Cleans APT package cache and removes obsolete packages (apt-get clean & autoremove).",
+    "apply_security_updates": "Applies available operating system security patches non-interactively.",
+    "update_guardian": "Updates VPS-Guardian-MCP from GitHub repository and refreshes virtual environment.",
 }
 
 # Regex to prevent command injection in service names
@@ -232,6 +236,14 @@ def run_recovery_action(
         return _action_clean_system_logs()
     elif action_clean == "kill_process":
         return _action_kill_process(target)
+    elif action_clean == "vacuum_systemd_journal":
+        return _action_vacuum_journal(target)
+    elif action_clean == "clean_package_cache":
+        return _action_clean_package_cache()
+    elif action_clean == "apply_security_updates":
+        return _action_apply_security_updates()
+    elif action_clean == "update_guardian":
+        return _action_update_guardian()
 
     return {"status": "error", "success": False, "error": f"Handler not implemented for '{action_clean}'."}
 
@@ -490,6 +502,278 @@ def _action_kill_process(target_pid: Optional[str | int]) -> Dict[str, Any]:
             "status": "error",
             "success": False,
             "error": f"Failed to terminate PID {pid}: {str(exc)}",
+        }
+
+
+def _action_vacuum_journal(target: Optional[str]) -> Dict[str, Any]:
+    """Prune systemd journal logs to a specified size threshold."""
+    journalctl_bin = shutil.which("journalctl")
+    if not journalctl_bin:
+        return {
+            "status": "unavailable",
+            "success": False,
+            "error": "journalctl is not installed or not in PATH.",
+        }
+
+    size_limit = "200M"
+    if target and isinstance(target, str):
+        cleaned_target = target.strip()
+        if re.match(r"^[0-9]{1,5}[KMGkmg]$", cleaned_target):
+            size_limit = cleaned_target
+
+    try:
+        res = subprocess.run(
+            [journalctl_bin, f"--vacuum-size={size_limit}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+        return {
+            "status": "ok",
+            "success": res.returncode == 0,
+            "action": "vacuum_systemd_journal",
+            "target_size_limit": size_limit,
+            "output": res.stdout.strip() or res.stderr.strip(),
+            "message": f"Systemd journal vacuumed to {size_limit}.",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"Failed to vacuum systemd journal: {str(exc)}",
+        }
+
+
+def _action_clean_package_cache() -> Dict[str, Any]:
+    """Clean APT package cache and remove orphaned packages."""
+    apt_get_bin = shutil.which("apt-get")
+    if not apt_get_bin:
+        return {
+            "status": "unavailable",
+            "success": False,
+            "error": "apt-get package manager is not available on this system.",
+        }
+
+    env = dict(os.environ)
+    env["DEBIAN_FRONTEND"] = "noninteractive"
+
+    clean_out = ""
+    autoremove_out = ""
+    try:
+        c_res = subprocess.run(
+            [apt_get_bin, "clean"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+            env=env,
+        )
+        clean_out = c_res.stdout.strip() or c_res.stderr.strip()
+
+        ar_res = subprocess.run(
+            [apt_get_bin, "-y", "autoremove"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=90,
+            env=env,
+        )
+        autoremove_out = ar_res.stdout.strip() or ar_res.stderr.strip()
+
+        return {
+            "status": "ok",
+            "success": True,
+            "action": "clean_package_cache",
+            "clean_output": clean_out or "(APT archives cleaned)",
+            "autoremove_output": autoremove_out,
+            "message": "APT package cache cleaned and obsolete packages purged.",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"Error cleaning package cache: {str(exc)}",
+        }
+
+
+def _action_apply_security_updates() -> Dict[str, Any]:
+    """Safely apply available operating system security updates non-interactively."""
+    apt_get_bin = shutil.which("apt-get")
+    if not apt_get_bin:
+        return {
+            "status": "unavailable",
+            "success": False,
+            "error": "apt-get is not available on this system.",
+        }
+
+    env = dict(os.environ)
+    env["DEBIAN_FRONTEND"] = "noninteractive"
+
+    try:
+        # Step 1: Refresh package index
+        subprocess.run(
+            [apt_get_bin, "update"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+            env=env,
+        )
+
+        # Step 2: Run unattended-upgrade if installed or safe non-interactive upgrade
+        unattended_bin = shutil.which("unattended-upgrade")
+        if unattended_bin:
+            up_res = subprocess.run(
+                [unattended_bin, "-v"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=240,
+                env=env,
+            )
+            output_msg = up_res.stdout.strip() or up_res.stderr.strip()
+        else:
+            up_res = subprocess.run(
+                [
+                    apt_get_bin,
+                    "-y",
+                    "-o",
+                    "Dpkg::Options::=--force-confdef",
+                    "-o",
+                    "Dpkg::Options::=--force-confold",
+                    "--only-upgrade",
+                    "upgrade",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=240,
+                env=env,
+            )
+            output_msg = up_res.stdout.strip() or up_res.stderr.strip()
+
+        return {
+            "status": "ok",
+            "success": up_res.returncode == 0,
+            "action": "apply_security_updates",
+            "output": output_msg[-1000:] if len(output_msg) > 1000 else output_msg,
+            "message": "Security updates applied successfully." if up_res.returncode == 0 else "Upgrade process encountered non-fatal notices.",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"Failed applying security updates: {str(exc)}",
+        }
+
+
+def _action_update_guardian() -> Dict[str, Any]:
+    """Self-update VPS-Guardian-MCP from GitHub and reload virtual environment."""
+    git_bin = shutil.which("git")
+    if not git_bin:
+        return {
+            "status": "unavailable",
+            "success": False,
+            "error": "git is not installed or not in PATH.",
+        }
+
+    # Identify repo directory
+    candidate_dirs = ["/opt/vps-guardian-mcp", os.getcwd()]
+    repo_dir = None
+    for cdir in candidate_dirs:
+        if os.path.isdir(os.path.join(cdir, ".git")):
+            repo_dir = cdir
+            break
+
+    if not repo_dir:
+        return {
+            "status": "error",
+            "success": False,
+            "error": "Could not locate VPS-Guardian-MCP git repository directory.",
+        }
+
+    try:
+        # Step 1: Record pre-update commit
+        pre_commit = "unknown"
+        pre_res = subprocess.run(
+            [git_bin, "-C", repo_dir, "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        if pre_res.returncode == 0:
+            pre_commit = pre_res.stdout.strip()
+
+        # Step 2: Git pull origin main
+        pull_res = subprocess.run(
+            [git_bin, "-C", repo_dir, "pull", "origin", "main"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        pull_out = pull_res.stdout.strip() or pull_res.stderr.strip()
+        if pull_res.returncode != 0:
+            return {
+                "status": "error",
+                "success": False,
+                "error": f"git pull failed: {pull_out}",
+            }
+
+        # Step 3: Record post-update commit
+        post_commit = pre_commit
+        post_res = subprocess.run(
+            [git_bin, "-C", repo_dir, "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        if post_res.returncode == 0:
+            post_commit = post_res.stdout.strip()
+
+        # Step 4: Reinstall package in virtualenv
+        pip_candidates = [
+            os.path.join(repo_dir, ".venv", "bin", "pip"),
+            os.path.join(repo_dir, ".venv", "Scripts", "pip.exe"),
+        ]
+        pip_bin = None
+        for cand in pip_candidates:
+            if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                pip_bin = cand
+                break
+
+        pip_out = ""
+        if pip_bin:
+            pip_res = subprocess.run(
+                [pip_bin, "install", "-e", repo_dir],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+            pip_out = pip_res.stdout.strip() or pip_res.stderr.strip()
+
+        return {
+            "status": "ok",
+            "success": True,
+            "action": "update_guardian",
+            "previous_commit": pre_commit,
+            "updated_commit": post_commit,
+            "git_output": pull_out,
+            "pip_reinstalled": pip_bin is not None,
+            "message": (
+                f"VPS-Guardian-MCP updated from {pre_commit} to {post_commit}. "
+                "New MCP sessions will use the updated codebase."
+            ),
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"Update failed: {str(exc)}",
         }
 
 

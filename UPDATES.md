@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.7.0] - 2026-09-08
+
+### Added
+- **Storage & Disk Usage Diagnostics (`src/storage.py`)**:
+  - `analyze_disk_usage`: Bounded, recursive directory scan identifying largest disk space consumers and runaway files without shell commands or pseudo-filesystem traversals (`/proc`, `/sys`, `/dev`, `/run`).
+- **Scheduler & Automation Inspection (`src/scheduler.py`)**:
+  - `list_cron_jobs`: Audits `/etc/crontab`, `/etc/cron.d/*`, periodic cron scripts (`cron.daily`, `cron.hourly`, etc.), and user crontabs, returning human-friendly schedule explanations.
+  - `list_systemd_timers`: Audits active and pending systemd timers (`systemctl list-timers`), reporting countdowns, trigger frequencies, and activated units.
+- **Operating System & Server Updates (`src/updates.py`)**:
+  - `check_system_updates`: Audits available APT packages, flags security CVE patches, and checks kernel restart requirements (`/var/run/reboot-required`). Generates prominent warnings for AI agents.
+  - `check_guardian_updates`: Queries remote GitHub repository to verify VPS-Guardian-MCP version currency and generates actionable self-update instructions.
+- **Enhanced Emergency Recovery Actions (`src/recover.py`)**:
+  - Added `vacuum_systemd_journal`: Safely prunes systemd journal logs to a target size limit (default: 200M).
+  - Added `clean_package_cache`: Cleans APT archive caches and removes obsolete packages (`apt-get clean && apt-get autoremove`).
+  - Added `apply_security_updates`: Non-interactively applies pending operating system security patches.
+  - Added `update_guardian`: Self-updates VPS-Guardian-MCP from GitHub and refreshes the virtual environment.
+- **Ambient Awareness & Diagnostic Prompts**:
+  - Enhanced MCP Resource `vps://system-overview` to continuously inject update alerts and kernel reboot flags into the AI agent's ambient context.
+  - Added MCP Prompt `emergency_disk_cleanup`: Guided runbook for diagnosing and relieving >90% disk space saturation.
+  - Added MCP Prompt `security_and_update_audit`: Comprehensive hardening routine auditing CVEs, SSH configuration, firewall rules, and intrusion logs.
+- Expanded total tool inventory from 21 to **26 active MCP tools**.
+
+---
+
 ## [0.6.0] - 2026-09-08
 
 ### Added
