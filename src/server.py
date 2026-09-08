@@ -8,7 +8,10 @@ Exposes safe, isolated tools for:
 - Docker management: List containers, inspect container logs, live resource statistics.
 - Network & firewall: Discover open/listening ports and audit UFW firewall rules.
 - File & config management: Whitelisted file viewing, atomic writing with backups, directory inspection.
+- Web & SSL diagnostics: Test Nginx configuration syntax, SSL/TLS expiry checks, virtual host listing.
+- Security auditing: Audit failed SSH logins, Fail2ban status, SSH daemon config security analysis.
 - Emergency recovery & backups: Whitelisted service restarts, cache/log cleanups, process termination, tar.gz backups.
+- MCP Resources & Prompts: Auto-updating system summary resource and incident triage prompt template.
 """
 
 from __future__ import annotations
@@ -55,6 +58,16 @@ try:
         get_open_ports as _get_open_ports,
         get_ufw_status as _get_ufw_status,
     )
+    from src.web import (
+        check_ssl_certificates as _check_ssl_certificates,
+        list_virtual_hosts as _list_virtual_hosts,
+        test_nginx_config as _test_nginx_config,
+    )
+    from src.security import (
+        audit_ssh_config as _audit_ssh_config,
+        check_failed_logins as _check_failed_logins,
+        get_fail2ban_status as _get_fail2ban_status,
+    )
     from src.recover import (
         create_backup as _create_backup,
         run_recovery_action as _run_recovery_action,
@@ -80,6 +93,16 @@ except ImportError:
     from network import (
         get_open_ports as _get_open_ports,
         get_ufw_status as _get_ufw_status,
+    )
+    from web import (
+        check_ssl_certificates as _check_ssl_certificates,
+        list_virtual_hosts as _list_virtual_hosts,
+        test_nginx_config as _test_nginx_config,
+    )
+    from security import (
+        audit_ssh_config as _audit_ssh_config,
+        check_failed_logins as _check_failed_logins,
+        get_fail2ban_status as _get_fail2ban_status,
     )
     from recover import (
         create_backup as _create_backup,
@@ -361,7 +384,108 @@ def list_directory(dir_path: str, max_depth: int = 1) -> str:
 
 
 # ============================================================================
-# 5. Emergency Recovery & Backup Tools
+# 5. Web Server & SSL Inspection Tools
+# ============================================================================
+
+@mcp.tool()
+def test_nginx_config() -> str:
+    """Test Nginx configuration for syntax errors ('nginx -t') without reloading.
+
+    Returns:
+        JSON string indicating syntax validity, exit code, and syntax error messages.
+    """
+    try:
+        data = _test_nginx_config()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in test_nginx_config: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def check_ssl_certificates() -> str:
+    """Audit SSL/TLS certificates configured on the host (Let's Encrypt / Certbot).
+
+    Returns:
+        JSON string listing domains, expiration dates, days remaining, and warning flags.
+    """
+    try:
+        data = _check_ssl_certificates()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in check_ssl_certificates: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def list_virtual_hosts() -> str:
+    """Inspect active Nginx virtual hosts, listening ports, SSL, and reverse proxy targets.
+
+    Returns:
+        JSON string with parsed virtual hosts from /etc/nginx/sites-enabled/ and conf.d/.
+    """
+    try:
+        data = _list_virtual_hosts()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in list_virtual_hosts: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 6. Security & Intrusion Audit Tools
+# ============================================================================
+
+@mcp.tool()
+def check_failed_logins(limit: int = 20) -> str:
+    """Inspect recent failed SSH login attempts to detect brute-force attackers.
+
+    Args:
+        limit: Number of recent failed attempts to inspect (default: 20, max: 100).
+
+    Returns:
+        JSON string with recent failed logins and top offending attacker IP addresses.
+    """
+    try:
+        data = _check_failed_logins(limit=limit)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in check_failed_logins: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def get_fail2ban_status() -> str:
+    """Check Fail2ban status, active protection jails, and currently banned IP addresses.
+
+    Returns:
+        JSON string detailing active jails and banned IP addresses.
+    """
+    try:
+        data = _get_fail2ban_status()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in get_fail2ban_status: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def audit_ssh_config() -> str:
+    """Audit the SSH daemon configuration against security best practices.
+
+    Returns:
+        JSON string with detected settings, security score (0-100), and remediation guidance.
+    """
+    try:
+        data = _audit_ssh_config()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in audit_ssh_config: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 7. Emergency Recovery & Backup Tools
 # ============================================================================
 
 @mcp.tool()
@@ -410,6 +534,32 @@ def create_backup(backup_type: str, source_path: str) -> str:
     except Exception as exc:
         logger.error(f"Error in create_backup: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 8. MCP Resources & Prompts
+# ============================================================================
+
+@mcp.resource("vps://system-overview")
+def get_system_overview_resource() -> str:
+    """Live JSON resource providing continuous system snapshot for AI context."""
+    try:
+        return json.dumps(_get_system_health(), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        return json.dumps({"status": "error", "error": str(exc)})
+
+
+@mcp.prompt("triage_server_incident")
+def triage_server_incident_prompt() -> str:
+    """Structured incident triage prompt guiding the AI through systematic diagnosis."""
+    return (
+        "You are an expert Linux Systems Administrator. Investigate the current server incident step-by-step:\n"
+        "1. Call `get_system_health` to verify CPU, RAM, and disk utilization.\n"
+        "2. Call `get_failed_systemd_units` to check for crashed services.\n"
+        "3. If services are degraded, call `read_service_logs` with grep_filter='ERROR' to pinpoint the failure.\n"
+        "4. Call `check_failed_logins` and `get_open_ports` to rule out security anomalies or port conflicts.\n"
+        "5. Formulate a safe recovery plan and present it to the operator before executing changes."
+    )
 
 
 def main() -> None:

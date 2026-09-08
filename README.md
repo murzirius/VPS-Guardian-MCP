@@ -4,7 +4,7 @@
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%202024--11--05-green.svg)](https://modelcontextprotocol.io/)
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
-[![Tools Count](https://img.shields.io/badge/Tools-15%20Active-brightgreen.svg)](#-tools-reference)
+[![Tools Count](https://img.shields.io/badge/Tools-21%20Active-brightgreen.svg)](#-tools-reference)
 [![Updates](https://img.shields.io/badge/Changelog-UPDATES.md-informational.svg)](UPDATES.md)
 
 A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, and isolated emergency recovery.
@@ -17,8 +17,10 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.5.0` (See [UPDATES.md](UPDATES.md)) |
-| **Active MCP Tools** | **15 tools** |
+| **Version** | `0.6.0` (See [UPDATES.md](UPDATES.md)) |
+| **Active MCP Tools** | **21 tools** |
+| **MCP Resources** | `vps://system-overview` |
+| **MCP Prompts** | `triage_server_incident` |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch Linux) |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -49,7 +51,17 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 - **`write_file_content`**: Atomically updates configuration files via temporary file staging, preserving original permissions and automatically generating timestamped backup copies (`.bak.<timestamp>`).
 - **`list_directory`**: Explores directory structures up to configurable depth limits within permitted paths.
 
-### 5. 🔧 Emergency Recovery & Backups (`src/recover.py`)
+### 5. 🌍 Web Server & SSL Diagnostics (`src/web.py`)
+- **`test_nginx_config`**: Validates Nginx syntax non-disruptively (`nginx -t`) before reloading configuration files.
+- **`check_ssl_certificates`**: Scans Certbot and Let's Encrypt certificates, verifying domain bindings and alerting if renewal is required (<14 days).
+- **`list_virtual_hosts`**: Parses virtual host declarations from `/etc/nginx/sites-enabled/` and `conf.d/` (server names, listening ports, SSL, and reverse proxy targets).
+
+### 6. 🔒 Security Auditing & Intrusion Detection (`src/security.py`)
+- **`check_failed_logins`**: Analyzes recent failed SSH authentications to surface brute-force attackers and repeat offending IP addresses.
+- **`get_fail2ban_status`**: Audits Fail2ban service status, active protection jails, and banned IP registries.
+- **`audit_ssh_config`**: Analyzes `/etc/ssh/sshd_config` against hardening guidelines (password auth, root login, port configurations) with a security score (0-100).
+
+### 7. 🔧 Emergency Recovery & Backups (`src/recover.py`)
 - **`execute_recovery`**: Executes strictly whitelisted administrative recovery operations:
   - `restart_service`: Restarts target systemd services with strict identifier validation.
   - `clean_docker_cache`: Performs a deep prune of dangling/unused images, stopped containers, networks, and build caches.
@@ -63,10 +75,11 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 
 When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the following operational standards:
 
-1. **Invoke Native MCP Tools Exclusively**: Never simulate or guess server states. Always call the corresponding tool (`get_system_health`, `list_docker_containers`, `get_open_ports`, `view_file_content`, etc.) to obtain verified ground-truth telemetry.
+1. **Invoke Native MCP Tools Exclusively**: Never simulate or guess server states. Always call the corresponding tool (`get_system_health`, `test_nginx_config`, `get_open_ports`, etc.) to obtain verified ground-truth telemetry.
 2. **Follow the Principle of Least Privilege**: Use read-only diagnostic tools first before suggesting or applying changes.
-3. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
-4. **Require Confirmation for State-Changing Operations**: Any recovery or file modification action (`execute_recovery`, `write_file_content`, `create_backup`) must be explicitly confirmed with the operator prior to execution.
+3. **Verify Configurations Before Reloading**: When modifying web server configurations, always execute `test_nginx_config` prior to invoking `execute_recovery(action_name='restart_service', target='nginx')`.
+4. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
+5. **Require Confirmation for State-Changing Operations**: Any recovery or file modification action (`execute_recovery`, `write_file_content`, `create_backup`) must be explicitly confirmed with the operator prior to execution.
 
 ---
 
@@ -76,11 +89,13 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 VPS-Guardian-MCP/
 ├── src/
 │   ├── __init__.py          # Package initialization
-│   ├── server.py            # FastMCP server and tool registry (15 tools)
+│   ├── server.py            # FastMCP server, resources, prompts, and tool registry (21 tools)
 │   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
 │   ├── docker_manager.py    # Container inventory, logs, and live telemetry
 │   ├── network.py           # Listening ports, bound processes, and UFW rules
 │   ├── files.py             # Whitelisted config viewer, atomic writer, directory inspector
+│   ├── web.py               # Nginx syntax verification, SSL checks, virtual host listing
+│   ├── security.py          # Failed logins, Fail2ban status, SSH configuration audit
 │   └── recover.py           # Systemd restarts, cache/log pruners, process killer, tar.gz backups
 ├── pyproject.toml           # Package configuration and dependencies
 ├── LICENSE                  # MIT License (2026, murzirius)
@@ -164,6 +179,12 @@ Configure your MCP client (Antigravity `mcp_config.json` or Claude Desktop `clau
 | `view_file_content` | `file_path` (*string*), `max_bytes` (*int*) | Reads authorized configuration files with size bounding |
 | `write_file_content` | `file_path` (*string*), `content` (*string*), `backup` (*bool*) | Atomically updates config files with automated `.bak` backups |
 | `list_directory` | `dir_path` (*string*), `max_depth` (*int*) | Lists directory contents within authorized paths |
+| `test_nginx_config` | *none* | Validates Nginx configuration syntax (`nginx -t`) non-disruptively |
+| `check_ssl_certificates` | *none* | Audits SSL/TLS certificates and alerts on expirations within 14 days |
+| `list_virtual_hosts` | *none* | Inspects active Nginx virtual hosts, listening ports, SSL, and proxies |
+| `check_failed_logins` | `limit` (*int*, default: *20*) | Surfaces recent failed SSH logins and top offending attacker IPs |
+| `get_fail2ban_status` | *none* | Queries Fail2ban operational status, active jails, and banned IPs |
+| `audit_ssh_config` | *none* | Audits `/etc/ssh/sshd_config` security settings with scoring (0-100) |
 | `execute_recovery` | `action_name` (*string*), `target` (*string*, optional) | Executes whitelisted operations (`restart_service`, `clean_docker_cache`, `clean_system_logs`, `kill_process`) |
 | `create_backup` | `backup_type` (*string*), `source_path` (*string*) | Generates isolated `.tar.gz` archives in `/var/backups/vps-guardian/` |
 

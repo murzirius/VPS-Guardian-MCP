@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.6.0] - 2026-09-08
+
+### Added
+- **Web Server & SSL Diagnostics Suite (`src/web.py`)**:
+  - `test_nginx_config`: Validates Nginx configuration syntax (`nginx -t`) non-disruptively before reloading.
+  - `check_ssl_certificates`: Scans Certbot and Let's Encrypt certificates, reporting domains, expiration dates, and alerts for renewals due within 14 days.
+  - `list_virtual_hosts`: Parses Nginx virtual host definitions from `/etc/nginx/sites-enabled/` and `conf.d/` (server names, ports, SSL, and reverse proxy targets).
+- **Security Auditing & Intrusion Detection (`src/security.py`)**:
+  - `check_failed_logins`: Audits SSH failure events from journal logs to identify brute-force attackers and recurring malicious IP addresses.
+  - `get_fail2ban_status`: Queries Fail2ban jail states and active banned IP registries.
+  - `audit_ssh_config`: Evaluates `/etc/ssh/sshd_config` against hardening guidelines (disabling password auth, root login policies, and non-standard ports) with security scoring.
+- **MCP Resources & Prompt Templates**:
+  - Added MCP Resource `vps://system-overview` for live ambient system telemetry.
+  - Added MCP Prompt `triage_server_incident` providing AI agents with a structured runbook for server incident diagnosis.
+- Expanded tool inventory from 15 to **21 active MCP tools**.
+
+---
+
 ## [0.5.0] - 2026-09-07
 
 ### Added
