@@ -604,17 +604,20 @@ def list_systemd_timers() -> str:
 # ============================================================================
 
 @mcp.tool()
-def check_system_updates() -> str:
+def check_system_updates(force_refresh: bool = False) -> str:
     """Audit available operating system package updates and pending security patches.
 
     Checks reboot requirements (/var/run/reboot-required), total upgradable packages,
-    and security CVE patches. Generates high-priority warnings for AI agents.
+    and security CVE patches. Cached for 5 minutes to minimize CPU and disk usage.
+
+    Args:
+        force_refresh: Set to True to bypass the 5-minute cache and query package managers directly.
 
     Returns:
         JSON string with update counts, security status, reboot flag, and recommended recovery action.
     """
     try:
-        data = _check_system_updates()
+        data = _check_system_updates(force_refresh=force_refresh)
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in check_system_updates: {exc}", exc_info=True)
@@ -622,17 +625,21 @@ def check_system_updates() -> str:
 
 
 @mcp.tool()
-def check_guardian_updates() -> str:
+def check_guardian_updates(force_refresh: bool = False) -> str:
     """Check if a newer version or commit of VPS-Guardian-MCP is available on GitHub.
 
     Provides automated version verification and action guidance for self-updating.
+    Cached for 5 minutes to minimize network and CPU overhead.
+
+    Args:
+        force_refresh: Set to True to bypass cache and query GitHub API directly.
 
     Returns:
         JSON string with current version, latest commit, update availability,
         and AI warning notice.
     """
     try:
-        data = _check_guardian_updates()
+        data = _check_guardian_updates(force_refresh=force_refresh)
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in check_guardian_updates: {exc}", exc_info=True)

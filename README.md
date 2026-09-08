@@ -17,7 +17,7 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.8.0` (See [UPDATES.md](UPDATES.md)) |
+| **Version** | `0.8.1` (See [UPDATES.md](UPDATES.md)) |
 | **Active MCP Tools** | **31 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
@@ -116,7 +116,7 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.8.0)
+│   ├── __init__.py          # Package version (v0.8.1)
 │   ├── server.py            # FastMCP server, resources, prompts, and tool registry (31 tools)
 │   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
 │   ├── docker_manager.py    # Container inventory, logs, and live telemetry

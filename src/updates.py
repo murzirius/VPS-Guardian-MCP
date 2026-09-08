@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.request
 from typing import Any, Dict, List, Optional
 
@@ -25,8 +26,15 @@ APT_CHECK_BIN = "/usr/lib/update-notifier/apt-check"
 GITHUB_REPO_API = "https://api.github.com/repos/murzirius/VPS-Guardian-MCP/releases/latest"
 GITHUB_COMMITS_API = "https://api.github.com/repos/murzirius/VPS-Guardian-MCP/commits/main"
 
+# In-memory TTL caching to prevent CPU/IO spikes from repeated apt-get or git invocations
+_UPDATES_CACHE: Dict[str, Any] = {}
+_UPDATES_CACHE_TIME: float = 0.0
+_GUARDIAN_CACHE: Dict[str, Any] = {}
+_GUARDIAN_CACHE_TIME: float = 0.0
+CACHE_TTL_SECONDS: float = 300.0  # 5 minutes cache
 
-def check_system_updates() -> Dict[str, Any]:
+
+def check_system_updates(force_refresh: bool = False) -> Dict[str, Any]:
     """Audit available operating system package updates and pending security patches.
 
     Checks:
@@ -34,11 +42,22 @@ def check_system_updates() -> Dict[str, Any]:
     - Total upgradable packages.
     - Security-specific updates (CVE patches).
     - Generates actionable alerts for AI agents to inform the administrator.
+    - Cached in-memory for 5 minutes to avoid CPU and disk spikes.
+
+    Args:
+        force_refresh: If True, bypasses cache and re-scans package managers.
 
     Returns:
         Structured dictionary with update counts, security status, reboot flag,
         and recommended recovery action.
     """
+    global _UPDATES_CACHE, _UPDATES_CACHE_TIME
+    now = time.time()
+    if not force_refresh and _UPDATES_CACHE and (now - _UPDATES_CACHE_TIME < CACHE_TTL_SECONDS):
+        cached_result = dict(_UPDATES_CACHE)
+        cached_result["cached"] = True
+        return cached_result
+
     reboot_required = os.path.exists(REBOOT_REQUIRED_FILE)
     reboot_packages: List[str] = []
     if reboot_required and os.path.exists(REBOOT_REQUIRED_PKGS_FILE):
@@ -130,7 +149,7 @@ def check_system_updates() -> Dict[str, Any]:
     elif total_upgradable > 0:
         warnings.append(f"{total_upgradable} routine package update(s) available.")
 
-    return {
+    res_data = {
         "status": "ok",
         "reboot_required": reboot_required,
         "reboot_packages": reboot_packages,
@@ -146,17 +165,32 @@ def check_system_updates() -> Dict[str, Any]:
         ),
     }
 
+    _UPDATES_CACHE = dict(res_data)
+    _UPDATES_CACHE_TIME = time.time()
+    res_data["cached"] = False
+    return res_data
 
-def check_guardian_updates() -> Dict[str, Any]:
+
+def check_guardian_updates(force_refresh: bool = False) -> Dict[str, Any]:
     """Check if a newer version of VPS-Guardian-MCP is available.
 
     Compares local version and git commit with remote GitHub repository.
     Provides actionable guidance and recovery command to self-update.
+    Cached in-memory for 5 minutes to prevent redundant network connections.
+
+    Args:
+        force_refresh: If True, queries GitHub directly bypassing cache.
 
     Returns:
         Structured dictionary with current version, latest version/commit,
         update availability flag, and warning message for AI agents.
     """
+    global _GUARDIAN_CACHE, _GUARDIAN_CACHE_TIME
+    now = time.time()
+    if not force_refresh and _GUARDIAN_CACHE and (now - _GUARDIAN_CACHE_TIME < CACHE_TTL_SECONDS):
+        cached_result = dict(_GUARDIAN_CACHE)
+        cached_result["cached"] = True
+        return cached_result
     try:
         from src import __version__ as current_version
     except ImportError:
@@ -242,7 +276,7 @@ def check_guardian_updates() -> Dict[str, Any]:
     else:
         warning_msg = f"VPS-Guardian-MCP is running the latest version (v{current_version}, {current_commit or 'HEAD'})."
 
-    return {
+    res_guardian = {
         "status": "ok",
         "current_version": current_version,
         "current_commit": current_commit,
@@ -255,3 +289,8 @@ def check_guardian_updates() -> Dict[str, Any]:
             f"Update available: {update_available}."
         ),
     }
+
+    _GUARDIAN_CACHE = dict(res_guardian)
+    _GUARDIAN_CACHE_TIME = time.time()
+    res_guardian["cached"] = False
+    return res_guardian
