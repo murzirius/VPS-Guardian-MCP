@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.8.0] - 2026-09-08
+
+### Added
+- **Kernel Diagnostics & OOM Crash Analysis (`src/crash.py`)**:
+  - `check_oom_events`: Audits kernel journal for Linux Out-Of-Memory (OOM) Killer invocations, identifying terminated processes, PIDs, and consumed RSS memory.
+  - `check_kernel_errors`: Inspects kernel logs for storage I/O errors, filesystem warnings (EXT4/Btrfs), hardware notices, and application segfaults.
+- **Outbound Network Connectivity & DNS Benchmarking (`src/net_diag.py`)**:
+  - `test_network_connectivity`: 100% pure Python socket benchmarking of DNS resolution latency, TCP handshake time, and TLS handshake latency without shell `ping`.
+  - `check_dns_health`: Tests system DNS resolver health, configured nameservers in `/etc/resolv.conf`, and query responsiveness against essential public endpoints.
+- **Database & Cache Health Inspector (`src/database.py`)**:
+  - `get_database_health`: Non-invasive discovery and health status checks for Redis (pure socket PING/PONG and RSS memory), PostgreSQL (`pg_isready` and Unix sockets), MySQL/MariaDB (`mysqladmin` ping), and SQLite database files.
+- **Security Dashboard Resource & Troubleshooting Prompt**:
+  - Added MCP Resource `vps://security-dashboard` aggregating firewall rules, Fail2ban jails, failed SSH authentications, and open listening ports.
+  - Added MCP Prompt `troubleshoot_application_crash`: Step-by-step diagnostic runbook for investigating mystery container, daemon, and OOM terminations.
+- Expanded total tool inventory from 26 to **31 active MCP tools**.
+
+---
+
 ## [0.7.0] - 2026-09-08
 
 ### Added

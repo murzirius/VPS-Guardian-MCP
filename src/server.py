@@ -79,6 +79,17 @@ try:
         check_guardian_updates as _check_guardian_updates,
         check_system_updates as _check_system_updates,
     )
+    from src.crash import (
+        check_kernel_errors as _check_kernel_errors,
+        check_oom_events as _check_oom_events,
+    )
+    from src.net_diag import (
+        check_dns_health as _check_dns_health,
+        test_network_connectivity as _test_network_connectivity,
+    )
+    from src.database import (
+        get_database_health as _get_database_health,
+    )
     from src.recover import (
         create_backup as _create_backup,
         run_recovery_action as _run_recovery_action,
@@ -125,6 +136,17 @@ except ImportError:
     from updates import (
         check_guardian_updates as _check_guardian_updates,
         check_system_updates as _check_system_updates,
+    )
+    from crash import (
+        check_kernel_errors as _check_kernel_errors,
+        check_oom_events as _check_oom_events,
+    )
+    from net_diag import (
+        check_dns_health as _check_dns_health,
+        test_network_connectivity as _test_network_connectivity,
+    )
+    from database import (
+        get_database_health as _get_database_health,
     )
     from recover import (
         create_backup as _create_backup,
@@ -618,7 +640,122 @@ def check_guardian_updates() -> str:
 
 
 # ============================================================================
-# 9. Emergency Recovery & Backup Tools
+# 9. Kernel Diagnostics & OOM Crash Tools
+# ============================================================================
+
+@mcp.tool()
+def check_oom_events(limit: int = 10) -> str:
+    """Inspect kernel logs for Linux Out-Of-Memory (OOM) Killer invocations.
+
+    Surfaces terminated processes, PIDs, and consumed RSS memory at time of termination.
+
+    Args:
+        limit: Maximum number of recent OOM events to return (1 to 50, default 10).
+
+    Returns:
+        JSON string with detected OOM incidents and diagnostic summary.
+    """
+    try:
+        data = _check_oom_events(limit=limit)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in check_oom_events: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def check_kernel_errors(limit: int = 20) -> str:
+    """Audit kernel logs for hardware failures, storage I/O errors, or application segfaults.
+
+    Args:
+        limit: Maximum number of error entries to retrieve (1 to 50, default 20).
+
+    Returns:
+        JSON string with categorized kernel errors, root causes, and critical issue counters.
+    """
+    try:
+        data = _check_kernel_errors(limit=limit)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in check_kernel_errors: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 10. Network Connectivity & DNS Benchmarking Tools
+# ============================================================================
+
+@mcp.tool()
+def test_network_connectivity(
+    target_host: str,
+    port: int = 443,
+    timeout_seconds: float = 5.0,
+) -> str:
+    """Benchmark outbound network connectivity and latency using direct Python sockets.
+
+    Measures DNS resolution latency, TCP handshake time, and TLS handshake latency without shell ping.
+
+    Args:
+        target_host: Destination hostname or IP address (e.g. 'api.github.com' or '8.8.8.8').
+        port: Destination port (1-65535, default 443).
+        timeout_seconds: Network socket timeout (0.5 to 30.0 seconds, default 5.0).
+
+    Returns:
+        JSON string with stage latency breakdown, resolved IP addresses, and TLS session details.
+    """
+    try:
+        data = _test_network_connectivity(
+            target_host=target_host,
+            port=port,
+            timeout_seconds=timeout_seconds,
+        )
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in test_network_connectivity: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def check_dns_health(domains: Optional[list[str]] = None) -> str:
+    """Audit system DNS resolution health, configured nameservers, and query responsiveness.
+
+    Args:
+        domains: Optional custom list of domains to probe. Defaults to essential public services.
+
+    Returns:
+        JSON string with configured nameservers, individual domain lookup latencies, and health verdict.
+    """
+    try:
+        data = _check_dns_health(domains=domains)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in check_dns_health: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 11. Database & Cache Health Tools
+# ============================================================================
+
+@mcp.tool()
+def get_database_health() -> str:
+    """Discover running databases and verify responsiveness, latency, and socket states.
+
+    Detects Redis, PostgreSQL, MySQL/MariaDB, and SQLite databases in application directories.
+
+    Returns:
+        JSON string with operational state, socket accessibility, and ping latency for each engine.
+    """
+    try:
+        data = _get_database_health()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in get_database_health: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 12. Emergency Recovery & Backup Tools
 # ============================================================================
 
 @mcp.tool()
@@ -699,6 +836,23 @@ def get_system_overview_resource() -> str:
         return json.dumps({"status": "error", "error": str(exc)})
 
 
+@mcp.resource("vps://security-dashboard")
+def get_security_dashboard_resource() -> str:
+    """Live security dashboard aggregating firewall, failed logins, fail2ban, and open ports."""
+    try:
+        dashboard = {
+            "ufw": _get_ufw_status(),
+            "fail2ban": _get_fail2ban_status(),
+            "failed_logins": _check_failed_logins(limit=10),
+            "ssh_audit": _audit_ssh_config(),
+            "open_ports": _get_open_ports(),
+            "system_updates": _check_system_updates(),
+        }
+        return json.dumps(dashboard, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        return json.dumps({"status": "error", "error": str(exc)})
+
+
 @mcp.prompt("triage_server_incident")
 def triage_server_incident_prompt() -> str:
     """Structured incident triage prompt guiding the AI through systematic diagnosis."""
@@ -737,6 +891,21 @@ def security_and_update_audit_prompt() -> str:
         "5. Verify background automation integrity with `list_cron_jobs` and `list_systemd_timers`.\n"
         "6. Check VPS-Guardian version currency with `check_guardian_updates`.\n"
         "7. Compile an audit summary with risk ratings and remediation actions."
+    )
+
+
+@mcp.prompt("troubleshoot_application_crash")
+def troubleshoot_application_crash_prompt() -> str:
+    """Runbook for investigating mysterious application, container, or service terminations."""
+    return (
+        "You are an expert DevOps SRE diagnosing an unexpected application crash or service exit:\n"
+        "1. Call `check_oom_events` to verify if Linux Kernel Out-Of-Memory Killer terminated the process.\n"
+        "2. Call `check_kernel_errors` for application segfaults, storage I/O errors, or disk corruption.\n"
+        "3. Call `get_failed_systemd_units` and `read_service_logs` with grep_filter='ERROR'.\n"
+        "4. If Docker container, inspect `get_docker_container_logs` and `get_docker_stats`.\n"
+        "5. Call `get_database_health` to verify if backing databases (Redis, PostgreSQL, MySQL) are operational.\n"
+        "6. Call `test_network_connectivity` if outbound API or database connections failed.\n"
+        "7. Compile root cause diagnosis and formulate recovery recommendations."
     )
 
 

@@ -4,10 +4,10 @@
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%202024--11--05-green.svg)](https://modelcontextprotocol.io/)
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
-[![Tools Count](https://img.shields.io/badge/Tools-26%20Active-brightgreen.svg)](#-tools-reference)
+[![Tools Count](https://img.shields.io/badge/Tools-31%20Active-brightgreen.svg)](#-tools-reference)
 [![Updates](https://img.shields.io/badge/Changelog-UPDATES.md-informational.svg)](UPDATES.md)
 
-A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, storage diagnostics, scheduled task inspection, OS patch auditing, and isolated emergency recovery.
+A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, storage diagnostics, scheduled task inspection, OS patch auditing, kernel crash investigations, outbound network latency benchmarks, database health checks, and isolated emergency recovery.
 
 It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structured, programmatic tools to inspect server health and resolve infrastructure issues without raw shell access or unconstrained root privileges.
 
@@ -17,10 +17,10 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.7.0` (See [UPDATES.md](UPDATES.md)) |
-| **Active MCP Tools** | **26 tools** |
-| **MCP Resources** | `vps://system-overview` (Live ambient telemetry with update alerts) |
-| **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit` |
+| **Version** | `0.8.0` (See [UPDATES.md](UPDATES.md)) |
+| **Active MCP Tools** | **31 tools** |
+| **MCP Resources** | `vps://system-overview`, `vps://security-dashboard` |
+| **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch Linux) |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -72,7 +72,18 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 - **`check_system_updates`**: Audits available operating system packages, flags unpatched security CVE updates, and detects kernel reboot requirements (`/var/run/reboot-required`). Generates prominent alerts for AI agents.
 - **`check_guardian_updates`**: Verifies local installation against the upstream GitHub repository to alert operators when a newer version or commit is available.
 
-### 10. 🔧 Emergency Recovery & Backups (`src/recover.py`)
+### 10. 💥 Kernel Diagnostics & OOM Crash Analysis (`src/crash.py`)
+- **`check_oom_events`**: Parses kernel logs to surface Out-Of-Memory (OOM) Killer terminations, identifying terminated processes, PIDs, and consumed RSS memory.
+- **`check_kernel_errors`**: Scans kernel journal for storage I/O errors, filesystem warnings (EXT4/Btrfs), hardware degradation, and application segfaults.
+
+### 11. 🚀 Outbound Network Connectivity & DNS Benchmarking (`src/net_diag.py`)
+- **`test_network_connectivity`**: Performs 100% pure Python socket benchmarking of DNS resolution latency, TCP handshake time, and TLS handshake latency without shell `ping`.
+- **`check_dns_health`**: Audits system DNS resolver health, configured nameservers in `/etc/resolv.conf`, and latency against core public endpoints.
+
+### 12. 🗄️ Database & Cache Health (`src/database.py`)
+- **`get_database_health`**: Non-invasively audits active local database engines: Redis (pure socket PING and RSS memory), PostgreSQL (`pg_isready`), MySQL/MariaDB (`mysqladmin` ping), and SQLite database file integrity.
+
+### 13. 🔧 Emergency Recovery & Backups (`src/recover.py`)
 - **`execute_recovery`**: Executes strictly whitelisted administrative recovery operations:
   - `restart_service`: Restarts target systemd services with strict identifier validation.
   - `clean_docker_cache`: Performs a deep prune of dangling/unused images, stopped containers, networks, and build caches.
@@ -90,12 +101,13 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 
 When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the following operational standards:
 
-1. **Invoke Native MCP Tools Exclusively**: Never simulate or guess server states. Always call the corresponding tool (`get_system_health`, `test_nginx_config`, `get_open_ports`, etc.) to obtain verified ground-truth telemetry.
+1. **Invoke Native MCP Tools Exclusively**: Never simulate or guess server states. Always call the corresponding tool (`get_system_health`, `test_nginx_config`, `check_oom_events`, etc.) to obtain verified ground-truth telemetry.
 2. **Follow the Principle of Least Privilege**: Use read-only diagnostic tools first before suggesting or applying changes.
-3. **Verify Configurations Before Reloading**: When modifying web server configurations, always execute `test_nginx_config` prior to invoking `execute_recovery(action_name='restart_service', target='nginx')`.
-4. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
-5. **Promptly Surface Critical Alerts**: When `check_system_updates` or `vps://system-overview` flags pending security patches or reboot requirements, prioritize alerting the operator and proposing remediation.
-6. **Require Confirmation for State-Changing Operations**: Any recovery or file modification action (`execute_recovery`, `write_file_content`, `create_backup`) must be explicitly confirmed with the operator prior to execution.
+3. **Diagnose Mysterious Crashes Methodically**: When an application or container terminates without obvious error logs, always run `check_oom_events` and `check_kernel_errors` to identify memory exhaustion or segfaults before restarting.
+4. **Verify Configurations Before Reloading**: When modifying web server configurations, always execute `test_nginx_config` prior to invoking `execute_recovery(action_name='restart_service', target='nginx')`.
+5. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
+6. **Promptly Surface Critical Alerts**: When `check_system_updates` or `vps://system-overview` flags pending security patches or reboot requirements, prioritize alerting the operator and proposing remediation.
+7. **Require Confirmation for State-Changing Operations**: Any recovery or file modification action (`execute_recovery`, `write_file_content`, `create_backup`) must be explicitly confirmed with the operator prior to execution.
 
 ---
 
@@ -104,8 +116,8 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.7.0)
-│   ├── server.py            # FastMCP server, resources, prompts, and tool registry (26 tools)
+│   ├── __init__.py          # Package version (v0.8.0)
+│   ├── server.py            # FastMCP server, resources, prompts, and tool registry (31 tools)
 │   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
 │   ├── docker_manager.py    # Container inventory, logs, and live telemetry
 │   ├── network.py           # Listening ports, bound processes, and UFW rules
@@ -115,6 +127,9 @@ VPS-Guardian-MCP/
 │   ├── storage.py           # Disk usage analyzer and space hog finder
 │   ├── scheduler.py         # Cron schedules and systemd timers inspection
 │   ├── updates.py           # OS security patch auditor and guardian self-version checker
+│   ├── crash.py             # OOM-killer events and kernel error diagnostics
+│   ├── net_diag.py          # Outbound network benchmarks and DNS latency checks
+│   ├── database.py          # Redis, PostgreSQL, MySQL, and SQLite health audits
 │   └── recover.py           # Service restarts, cache/log pruners, process killer, tar.gz backups
 ├── pyproject.toml           # Package configuration and dependencies
 ├── LICENSE                  # MIT License (2026, murzirius)
@@ -209,6 +224,11 @@ Configure your MCP client (Antigravity `mcp_config.json` or Claude Desktop `clau
 | `list_systemd_timers` | *none* | Audits systemd timers with next trigger, elapsed, and active units |
 | `check_system_updates` | *none* | Audits available OS package upgrades, security CVE patches, and reboot status |
 | `check_guardian_updates` | *none* | Compares current VPS-Guardian version/commit with upstream GitHub release |
+| `check_oom_events` | `limit` (*int*, default: *10*) | Audits kernel logs for Linux Out-Of-Memory (OOM) Killer terminations |
+| `check_kernel_errors` | `limit` (*int*, default: *20*) | Inspects kernel errors for hardware, storage I/O, and segfault events |
+| `test_network_connectivity` | `target_host` (*string*), `port` (*int*), `timeout_seconds` (*float*) | Benchmarks DNS, TCP handshake, and TLS latency via pure Python sockets |
+| `check_dns_health` | `domains` (*list[string]*, optional) | Audits system DNS resolver health, nameservers, and query latencies |
+| `get_database_health` | *none* | Audits local database services (Redis, PostgreSQL, MySQL/MariaDB, SQLite) |
 | `execute_recovery` | `action_name` (*string*), `target` (*string*, optional) | Executes whitelisted operations (`restart_service`, `clean_docker_cache`, `clean_system_logs`, `kill_process`, `vacuum_systemd_journal`, `clean_package_cache`, `apply_security_updates`, `update_guardian`) |
 | `create_backup` | `backup_type` (*string*), `source_path` (*string*) | Generates isolated `.tar.gz` archives in `/var/backups/vps-guardian/` |
 
