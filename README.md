@@ -4,8 +4,8 @@
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%202024--11--05-green.svg)](https://modelcontextprotocol.io/)
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
-[![Downloads](https://img.shields.io/github/downloads/murzirius/VPS-Guardian-MCP/total?color=blue&label=downloads)](https://github.com/murzirius/VPS-Guardian-MCP/releases)
-[![PyPI Downloads](https://img.shields.io/pypi/dm/vps-guardian-mcp?color=blue&label=pypi%20downloads)](https://pypi.org/project/vps-guardian-mcp/)
+[![Release](https://img.shields.io/github/v/tag/murzirius/VPS-Guardian-MCP?color=blue&label=version)](https://github.com/murzirius/VPS-Guardian-MCP/tags)
+[![Stars](https://img.shields.io/github/stars/murzirius/VPS-Guardian-MCP?style=flat&color=yellow)](https://github.com/murzirius/VPS-Guardian-MCP/stargazers)
 [![Tools Count](https://img.shields.io/badge/Tools-37%20Active-brightgreen.svg)](#-tools-reference)
 [![Updates](https://img.shields.io/badge/Changelog-UPDATES.md-informational.svg)](UPDATES.md)
 
@@ -23,7 +23,7 @@ It provides next-generation AI developer tools (Google Antigravity 2.0, Claude C
 | **Active MCP Tools** | **37 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
-| **Downloads & Adoption** | [![Downloads](https://img.shields.io/github/downloads/murzirius/VPS-Guardian-MCP/total?color=blue&label=downloads)](https://github.com/murzirius/VPS-Guardian-MCP/releases) / [PyPI](https://pypi.org/project/vps-guardian-mcp/) |
+| **Release Status** | [v0.9.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch Linux) |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
