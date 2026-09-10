@@ -180,7 +180,37 @@ sudo usermod -aG systemd-journal $USER
 
 ## ⚙️ Modern Client Configuration
 
-VPS-Guardian-MCP communicates over standard input/output (`stdio`) through an OpenSSH tunnel. Configure any modern MCP client below:
+VPS-Guardian-MCP can be launched effortlessly via **`npx`** (recommended — handles SSH keepalive, timeouts, and stdio pipes automatically) or via direct **OpenSSH stdio**.
+
+### ⚡ Quickstart via NPX (Cursor, Claude Code, Antigravity, Windsurf)
+
+Configure your client to run `npx -y vps-guardian-mcp`:
+
+```json
+{
+  "mcpServers": {
+    "vps-guardian": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "vps-guardian-mcp",
+        "--host", "<YOUR_VPS_IP>",
+        "-i", "~/.ssh/id_ed25519"
+      ]
+    }
+  }
+}
+```
+
+Or for **Claude Code** CLI terminal:
+
+```bash
+claude mcp add vps-guardian -- npx -y vps-guardian-mcp --host <YOUR_VPS_IP> -i ~/.ssh/id_ed25519
+```
+
+---
+
+### 🔧 Direct OpenSSH Stdio Configuration
 
 ### 1. 🚀 Google Antigravity 2.0 / Antigravity IDE
 Add to your global or workspace configuration in `~/.gemini/config/mcp_config.json`:
