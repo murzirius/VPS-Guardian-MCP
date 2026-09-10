@@ -184,7 +184,7 @@ VPS-Guardian-MCP can be launched effortlessly via **`npx`** (recommended — han
 
 ### ⚡ Quickstart via NPX (Cursor, Claude Code, Antigravity, Windsurf)
 
-Configure your client to run `npx -y vps-guardian-mcp`:
+Run instantly without cloning, manual SSH parameter setup, or token registration via GitHub shorthand:
 
 ```json
 {
@@ -193,7 +193,7 @@ Configure your client to run `npx -y vps-guardian-mcp`:
       "command": "npx",
       "args": [
         "-y",
-        "vps-guardian-mcp",
+        "github:murzirius/VPS-Guardian-MCP",
         "--host", "<YOUR_VPS_IP>",
         "-i", "~/.ssh/id_ed25519"
       ]
@@ -205,7 +205,7 @@ Configure your client to run `npx -y vps-guardian-mcp`:
 Or for **Claude Code** CLI terminal:
 
 ```bash
-claude mcp add vps-guardian -- npx -y vps-guardian-mcp --host <YOUR_VPS_IP> -i ~/.ssh/id_ed25519
+claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP --host <YOUR_VPS_IP> -i ~/.ssh/id_ed25519
 ```
 
 ---
