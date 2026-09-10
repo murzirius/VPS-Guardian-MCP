@@ -45,9 +45,17 @@ try:
         read_service_logs as _read_service_logs,
     )
     from src.docker_manager import (
+        clean_docker_garbage as _clean_docker_garbage,
+        docker_container_action as _docker_container_action,
         get_docker_container_logs as _get_docker_container_logs,
         get_docker_stats as _get_docker_stats,
+        inspect_docker_container as _inspect_docker_container,
         list_docker_containers as _list_docker_containers,
+    )
+    from src.proc_deep import (
+        check_system_limits as _check_system_limits,
+        detect_zombie_processes as _detect_zombie_processes,
+        get_process_details as _get_process_details,
     )
     from src.files import (
         list_directory as _list_directory,
@@ -103,9 +111,17 @@ except ImportError:
         read_service_logs as _read_service_logs,
     )
     from docker_manager import (
+        clean_docker_garbage as _clean_docker_garbage,
+        docker_container_action as _docker_container_action,
         get_docker_container_logs as _get_docker_container_logs,
         get_docker_stats as _get_docker_stats,
+        inspect_docker_container as _inspect_docker_container,
         list_docker_containers as _list_docker_containers,
+    )
+    from proc_deep import (
+        check_system_limits as _check_system_limits,
+        detect_zombie_processes as _detect_zombie_processes,
+        get_process_details as _get_process_details,
     )
     from files import (
         list_directory as _list_directory,
@@ -263,6 +279,54 @@ def read_service_logs(
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
 
 
+@mcp.tool()
+def get_process_details(pid: int) -> str:
+    """In-depth diagnostics for a specific PID: hierarchy, threads, memory, open files, sockets, I/O.
+
+    Args:
+        pid: The target process ID to inspect (positive integer).
+
+    Returns:
+        JSON string detailing process tree, memory breakdown, sockets, files, and sanitized env.
+    """
+    try:
+        data = _get_process_details(pid=pid)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in get_process_details: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def detect_zombie_processes() -> str:
+    """Scan system process table for defunct/zombie processes and identify non-reaping parents.
+
+    Returns:
+        JSON string reporting detected zombies, parent PIDs, and remediation advice.
+    """
+    try:
+        data = _detect_zombie_processes()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in detect_zombie_processes: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def check_system_limits() -> str:
+    """Audit system-wide and user limits: file descriptors, max PIDs, virtual memory, socket backlogs.
+
+    Returns:
+        JSON string comparing allocations to kernel limits and highlighting threshold warnings (>80%).
+    """
+    try:
+        data = _check_system_limits()
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in check_system_limits: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
 # ============================================================================
 # 2. Docker Management Tools
 # ============================================================================
@@ -318,6 +382,62 @@ def get_docker_stats() -> str:
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in get_docker_stats: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def docker_container_action(container_name: str, action: str, timeout: int = 10) -> str:
+    """Safely execute lifecycle operations (start, stop, restart, pause, unpause) on a container.
+
+    Args:
+        container_name: Name or short/full ID of the target Docker container.
+        action: Desired action ('start', 'stop', 'restart', 'pause', 'unpause').
+        timeout: Stop/restart timeout in seconds before forcible kill (default: 10).
+
+    Returns:
+        JSON string detailing previous status, new status, and action outcome.
+    """
+    try:
+        data = _docker_container_action(container_name=container_name, action=action, timeout=timeout)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in docker_container_action: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def inspect_docker_container(container_name: str) -> str:
+    """Deep inspection of container networks, volume mounts, restart policy, healthcheck, and masked env vars.
+
+    Args:
+        container_name: Name or short/full ID of the target container.
+
+    Returns:
+        JSON string detailing full container architecture and runtime state.
+    """
+    try:
+        data = _inspect_docker_container(container_name=container_name)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in inspect_docker_container: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def clean_docker_garbage(prune_type: str = "all") -> str:
+    """Safely reclaim disk space by pruning dangling images, stopped containers, unused volumes, and networks.
+
+    Args:
+        prune_type: Category to prune ('containers', 'images', 'volumes', 'networks', 'all'). Default is 'all'.
+
+    Returns:
+        JSON string detailing deleted items and total disk capacity reclaimed.
+    """
+    try:
+        data = _clean_docker_garbage(prune_type=prune_type)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in clean_docker_garbage: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
 
 
@@ -856,6 +976,21 @@ def get_security_dashboard_resource() -> str:
             "system_updates": _check_system_updates(),
         }
         return json.dumps(dashboard, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        return json.dumps({"status": "error", "error": str(exc)})
+
+
+@mcp.resource("vps://docker-overview")
+def get_docker_overview_resource() -> str:
+    """Live summary resource aggregating Docker engine status, containers inventory, and resource metrics."""
+    try:
+        containers_summary = _list_docker_containers(all=True)
+        stats_summary = _get_docker_stats()
+        overview = {
+            "containers": containers_summary,
+            "stats": stats_summary,
+        }
+        return json.dumps(overview, indent=2, ensure_ascii=False)
     except Exception as exc:
         return json.dumps({"status": "error", "error": str(exc)})
 

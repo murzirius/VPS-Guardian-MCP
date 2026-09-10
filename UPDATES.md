@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.9.0] - 2026-09-10
+
+### Added
+- **Docker Lifecycle Management & Storage Reclamation (`src/docker_manager.py`)**:
+  - `docker_container_action`: Safely executes container lifecycle operations (`start`, `stop`, `restart`, `pause`, `unpause`) with strict input sanitation (`CONTAINER_NAME_REGEX`) and configurable shutdown grace timeouts.
+  - `inspect_docker_container`: Detailed architectural introspection of any container, returning network addresses, port mappings, mounted volumes/binds, healthcheck history, restart policies, resource limits, and environment variables with automated masking of sensitive credentials.
+  - `clean_docker_garbage`: Reclaims disk space by safely pruning dangling images, stopped containers, unused volumes, and orphan networks (`prune_type`: `'containers'`, `'images'`, `'volumes'`, `'networks'`, `'all'`).
+  - Added MCP Resource `vps://docker-overview`: Continuous live summary of Docker daemon status, container inventories, health metrics, and disk reclamation opportunities.
+- **Deep Process Profiling & Linux Kernel Limits (`src/proc_deep.py`)**:
+  - `get_process_details`: Exhaustive runtime profiling of a specific PID including parent/children hierarchy, CPU percentage, user/system times, thread counts, RSS/VMS/shared memory maps, open file descriptor counts (`num_fds`), open files sample, active network sockets (`local -> remote`, `LISTEN`/`ESTABLISHED`), I/O counters, and sanitized environment variables.
+  - `detect_zombie_processes`: Scans the system process table for defunct/zombie processes, identifies their non-reaping parent processes (PPID, command line, status), and provides diagnostic instructions for resolving uncollected child processes.
+  - `check_system_limits`: Audits system-wide file descriptor allocations (`/proc/sys/fs/file-nr` vs `fs.file-max`) and process NOFILE limits, process/thread capacity (`/proc/sys/kernel/pid_max` and NPROC), virtual memory parameters (`vm.swappiness`, `vm.vfs_cache_pressure`, `vm.max_map_count`), and socket backlog limits (`somaxconn`, `tcp_max_syn_backlog`), flagging warnings when utilization exceeds 80%.
+- **Test Suite**:
+  - Added test suites in `tests/test_proc_deep.py` and `tests/test_docker_deep.py` compatible with standard `unittest` and `pytest`.
+- Total tool inventory increased from 31 to **37 active MCP tools**.
+
+---
+
 ## [0.8.1] - 2026-09-08
 
 ### Changed & Optimized

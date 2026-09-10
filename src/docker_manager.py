@@ -17,6 +17,12 @@ logger = logging.getLogger("vps_guardian.docker")
 # Regex to prevent command/path injection in container identifiers
 CONTAINER_NAME_REGEX = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$")
 
+# Pattern to identify sensitive environment variables for masking
+SENSITIVE_ENV_PATTERN = re.compile(
+    r"(pass(word)?|secret|token|key|cred(ential)?|auth|api_key|private|cert)",
+    re.IGNORECASE,
+)
+
 
 def _format_bytes(bytes_value: int | float) -> str:
     """Format bytes into human-readable string (B, KB, MB, GB, TB)."""
@@ -28,11 +34,27 @@ def _format_bytes(bytes_value: int | float) -> str:
     return f"{val:.2f} TB"
 
 
+try:
+    import docker
+    from docker.errors import APIError, DockerException, NotFound
+except ImportError:
+    class DockerException(Exception):
+        """Fallback DockerException when docker library is unavailable."""
+        pass
+
+    class APIError(DockerException):
+        """Fallback APIError when docker library is unavailable."""
+        pass
+
+    class NotFound(DockerException):
+        """Fallback NotFound when docker library is unavailable."""
+        pass
+
+
 def _get_docker_client():
     """Obtain initialized docker-py client with detailed error checking."""
     try:
         import docker
-        from docker.errors import DockerException
     except ImportError:
         return None, {
             "status": "unavailable",
@@ -169,7 +191,6 @@ def get_docker_container_logs(container_name: str, lines_count: int = 50) -> Dic
         return err
 
     try:
-        from docker.errors import NotFound
         container = client.containers.get(clean_name)
         raw_logs = container.logs(
             tail=lines_count,
@@ -299,3 +320,344 @@ def get_docker_stats() -> Dict[str, Any]:
     except Exception as exc:
         logger.error(f"Error gathering docker stats: {exc}", exc_info=True)
         return {"status": "error", "error": f"Failed to gather docker stats: {str(exc)}", "stats": []}
+
+
+def docker_container_action(container_name: str, action: str, timeout: int = 10) -> Dict[str, Any]:
+    """Safely execute a lifecycle action against a specific Docker container.
+
+    Args:
+        container_name: Name or short/full ID of the target container.
+        action: Lifecycle action to perform ('start', 'stop', 'restart', 'pause', 'unpause').
+        timeout: Grace period in seconds before forcible kill on stop/restart (default: 10).
+
+    Returns:
+        Structured dictionary reporting previous state, new state, and execution outcome.
+    """
+    if not isinstance(container_name, str):
+        return {"status": "error", "error": "container_name must be a string."}
+
+    clean_name = container_name.strip()
+    if not CONTAINER_NAME_REGEX.match(clean_name):
+        return {
+            "status": "error",
+            "error": f"Invalid container name or ID '{clean_name}'. Must contain only alphanumeric, dot, and dash characters.",
+        }
+
+    valid_actions = {"start", "stop", "restart", "pause", "unpause"}
+    clean_action = str(action).lower().strip()
+    if clean_action not in valid_actions:
+        return {
+            "status": "error",
+            "error": f"Invalid action '{action}'. Permitted actions are: {', '.join(sorted(valid_actions))}.",
+        }
+
+    try:
+        timeout = max(1, min(int(timeout), 60))
+    except (ValueError, TypeError):
+        timeout = 10
+
+    client, err = _get_docker_client()
+    if err:
+        return err
+
+    try:
+        container = client.containers.get(clean_name)
+        prev_status = container.status
+
+        if clean_action == "start":
+            container.start()
+        elif clean_action == "stop":
+            container.stop(timeout=timeout)
+        elif clean_action == "restart":
+            container.restart(timeout=timeout)
+        elif clean_action == "pause":
+            container.pause()
+        elif clean_action == "unpause":
+            container.unpause()
+
+        container.reload()
+        new_status = container.status
+
+        logger.info(f"Container '{clean_name}' action '{clean_action}' executed successfully ({prev_status} -> {new_status})")
+        return {
+            "status": "ok",
+            "action": clean_action,
+            "container_name": container.name,
+            "container_id": container.short_id,
+            "previous_status": prev_status,
+            "current_status": new_status,
+            "message": f"Successfully performed '{clean_action}' on container '{container.name}' ({prev_status} -> {new_status}).",
+        }
+    except NotFound:
+        return {
+            "status": "error",
+            "error": f"Container '{clean_name}' not found.",
+            "container_name": clean_name,
+        }
+    except APIError as exc:
+        logger.error(f"Docker API error during '{clean_action}' on '{clean_name}': {exc}")
+        return {
+            "status": "error",
+            "error": f"Docker API error: {exc.explanation if hasattr(exc, 'explanation') else str(exc)}",
+            "container_name": clean_name,
+        }
+    except Exception as exc:
+        logger.error(f"Unexpected error during '{clean_action}' on '{clean_name}': {exc}", exc_info=True)
+        return {
+            "status": "error",
+            "error": f"Failed to execute '{clean_action}': {str(exc)}",
+            "container_name": clean_name,
+        }
+
+
+def inspect_docker_container(container_name: str) -> Dict[str, Any]:
+    """Perform a deep architectural and runtime inspection of a specific Docker container.
+
+    Extracts detailed network configuration, volume mounts, healthcheck history,
+    restart policies, resource limits, and environment variables (with sensitive keys masked).
+
+    Args:
+        container_name: Name or short/full ID of the container.
+
+    Returns:
+        Structured dictionary with deep container diagnostics.
+    """
+    if not isinstance(container_name, str):
+        return {"status": "error", "error": "container_name must be a string."}
+
+    clean_name = container_name.strip()
+    if not CONTAINER_NAME_REGEX.match(clean_name):
+        return {
+            "status": "error",
+            "error": f"Invalid container name or ID '{clean_name}'. Must contain only alphanumeric, dot, and dash characters.",
+        }
+
+    client, err = _get_docker_client()
+    if err:
+        return err
+
+    try:
+        container = client.containers.get(clean_name)
+        attrs = container.attrs or {}
+        state = attrs.get("State", {})
+        config = attrs.get("Config", {})
+        host_config = attrs.get("HostConfig", {})
+        network_settings = attrs.get("NetworkSettings", {})
+
+        # 1. Ports
+        ports_raw = network_settings.get("Ports") or {}
+        clean_ports = []
+        for c_port, bindings in ports_raw.items():
+            if bindings:
+                for b in bindings:
+                    clean_ports.append(f"{b.get('HostIp', '0.0.0.0')}:{b.get('HostPort')}->{c_port}")
+            else:
+                clean_ports.append(c_port)
+
+        # 2. Mounts
+        mounts_raw = attrs.get("Mounts") or []
+        clean_mounts = []
+        for m in mounts_raw:
+            clean_mounts.append({
+                "type": m.get("Type", "bind"),
+                "source": m.get("Source", ""),
+                "destination": m.get("Destination", ""),
+                "mode": m.get("Mode", ""),
+                "rw": m.get("RW", True),
+                "propagation": m.get("Propagation", ""),
+            })
+
+        # 3. Networks
+        networks_raw = network_settings.get("Networks") or {}
+        clean_networks = {}
+        for net_name, net_cfg in networks_raw.items():
+            clean_networks[net_name] = {
+                "ip_address": net_cfg.get("IPAddress", ""),
+                "gateway": net_cfg.get("Gateway", ""),
+                "mac_address": net_cfg.get("MacAddress", ""),
+                "aliases": net_cfg.get("Aliases", []),
+            }
+
+        # 4. Mask sensitive environment variables
+        env_raw = config.get("Env") or []
+        clean_env = []
+        for item in env_raw[:60]:
+            if "=" in item:
+                k, v = item.split("=", 1)
+                if SENSITIVE_ENV_PATTERN.search(k):
+                    clean_env.append(f"{k}=***MASKED***")
+                elif len(v) > 120:
+                    clean_env.append(f"{k}={v[:117]}...")
+                else:
+                    clean_env.append(item)
+            else:
+                clean_env.append(item)
+
+        # 5. Resource Limits
+        memory_limit = host_config.get("Memory", 0)
+        nano_cpus = host_config.get("NanoCpus", 0)
+        cpu_shares = host_config.get("CpuShares", 0)
+
+        # 6. Health Log
+        health_raw = state.get("Health", {})
+        health_status = health_raw.get("Status", "none")
+        health_logs_sample = []
+        for log_entry in (health_raw.get("Log") or [])[-5:]:
+            health_logs_sample.append({
+                "start": log_entry.get("Start", ""),
+                "end": log_entry.get("End", ""),
+                "exit_code": log_entry.get("ExitCode", 0),
+                "output": log_entry.get("Output", "").strip()[:200],
+            })
+
+        return {
+            "status": "ok",
+            "id": container.id,
+            "short_id": container.short_id,
+            "name": container.name,
+            "image": config.get("Image", str(container.image)),
+            "created": attrs.get("Created", ""),
+            "path": attrs.get("Path", ""),
+            "args": attrs.get("Args", []),
+            "state": {
+                "status": state.get("Status", container.status),
+                "running": state.get("Running", False),
+                "paused": state.get("Paused", False),
+                "restarting": state.get("Restarting", False),
+                "oom_killed": state.get("OOMKilled", False),
+                "dead": state.get("Dead", False),
+                "pid": state.get("Pid", 0),
+                "exit_code": state.get("ExitCode", 0),
+                "error": state.get("Error", ""),
+                "started_at": state.get("StartedAt", ""),
+                "finished_at": state.get("FinishedAt", ""),
+                "health_status": health_status,
+                "recent_health_checks": health_logs_sample,
+            },
+            "network": {
+                "ip_address": network_settings.get("IPAddress", ""),
+                "gateway": network_settings.get("Gateway", ""),
+                "mac_address": network_settings.get("MacAddress", ""),
+                "ports": clean_ports,
+                "networks": clean_networks,
+            },
+            "mounts": clean_mounts,
+            "host_config": {
+                "restart_policy": host_config.get("RestartPolicy", {}).get("Name", "no"),
+                "auto_remove": host_config.get("AutoRemove", False),
+                "memory_limit": _format_bytes(memory_limit) if memory_limit > 0 else "unlimited",
+                "nano_cpus": nano_cpus,
+                "cpu_shares": cpu_shares,
+                "network_mode": host_config.get("NetworkMode", "default"),
+            },
+            "environment_variables": clean_env,
+        }
+    except NotFound:
+        return {
+            "status": "error",
+            "error": f"Container '{clean_name}' not found.",
+            "container_name": clean_name,
+        }
+    except Exception as exc:
+        logger.error(f"Error inspecting container '{clean_name}': {exc}", exc_info=True)
+        return {
+            "status": "error",
+            "error": f"Failed inspecting container '{clean_name}': {str(exc)}",
+            "container_name": clean_name,
+        }
+
+
+def clean_docker_garbage(prune_type: str = "all") -> Dict[str, Any]:
+    """Safely reclaim disk space by pruning unused Docker resources.
+
+    Args:
+        prune_type: Category to prune ('containers', 'images', 'volumes', 'networks', 'all'). Default is 'all'.
+
+    Returns:
+        Structured breakdown of deleted items and total disk capacity reclaimed.
+    """
+    valid_types = {"containers", "images", "volumes", "networks", "all"}
+    clean_type = str(prune_type).lower().strip()
+    if clean_type not in valid_types:
+        return {
+            "status": "error",
+            "error": f"Invalid prune_type '{prune_type}'. Permitted options: {', '.join(sorted(valid_types))}.",
+        }
+
+    client, err = _get_docker_client()
+    if err:
+        return err
+
+    total_reclaimed_bytes = 0
+    containers_deleted: List[str] = []
+    images_deleted: List[str] = []
+    volumes_deleted: List[str] = []
+    networks_deleted: List[str] = []
+
+    try:
+        # 1. Containers
+        if clean_type in ("containers", "all"):
+            try:
+                res = client.containers.prune()
+                containers_deleted = res.get("ContainersDeleted") or []
+                total_reclaimed_bytes += res.get("SpaceReclaimed", 0)
+            except Exception as e:
+                logger.warning(f"Containers prune error: {e}")
+
+        # 2. Images (dangling untagged layers)
+        if clean_type in ("images", "all"):
+            try:
+                res = client.images.prune(filters={"dangling": True})
+                del_imgs = res.get("ImagesDeleted") or []
+                for item in del_imgs:
+                    if isinstance(item, dict):
+                        images_deleted.append(item.get("Deleted", item.get("Untagged", "unknown")))
+                    else:
+                        images_deleted.append(str(item))
+                total_reclaimed_bytes += res.get("SpaceReclaimed", 0)
+            except Exception as e:
+                logger.warning(f"Images prune error: {e}")
+
+        # 3. Volumes
+        if clean_type in ("volumes", "all"):
+            try:
+                res = client.volumes.prune()
+                volumes_deleted = res.get("VolumesDeleted") or []
+                total_reclaimed_bytes += res.get("SpaceReclaimed", 0)
+            except Exception as e:
+                logger.warning(f"Volumes prune error: {e}")
+
+        # 4. Networks
+        if clean_type in ("networks", "all"):
+            try:
+                res = client.networks.prune()
+                networks_deleted = res.get("NetworksDeleted") or []
+            except Exception as e:
+                logger.warning(f"Networks prune error: {e}")
+
+        return {
+            "status": "ok",
+            "prune_type": clean_type,
+            "total_space_reclaimed": _format_bytes(total_reclaimed_bytes),
+            "total_space_reclaimed_bytes": total_reclaimed_bytes,
+            "containers_deleted_count": len(containers_deleted),
+            "containers_deleted": containers_deleted[:20],
+            "images_deleted_count": len(images_deleted),
+            "images_deleted": images_deleted[:20],
+            "volumes_deleted_count": len(volumes_deleted),
+            "volumes_deleted": volumes_deleted[:20],
+            "networks_deleted_count": len(networks_deleted),
+            "networks_deleted": networks_deleted[:20],
+            "summary": (
+                f"Docker cleanup completed ({clean_type}). "
+                f"Reclaimed {_format_bytes(total_reclaimed_bytes)} across "
+                f"{len(containers_deleted)} containers, {len(images_deleted)} images, and {len(volumes_deleted)} volumes."
+            ),
+        }
+    except Exception as exc:
+        logger.error(f"Error during docker cleanup: {exc}", exc_info=True)
+        return {
+            "status": "error",
+            "error": f"Docker cleanup failed: {str(exc)}",
+            "prune_type": clean_type,
+        }

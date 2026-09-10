@@ -4,12 +4,14 @@
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%202024--11--05-green.svg)](https://modelcontextprotocol.io/)
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
-[![Tools Count](https://img.shields.io/badge/Tools-31%20Active-brightgreen.svg)](#-tools-reference)
+[![Downloads](https://img.shields.io/github/downloads/murzirius/VPS-Guardian-MCP/total?color=blue&label=downloads)](https://github.com/murzirius/VPS-Guardian-MCP/releases)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/vps-guardian-mcp?color=blue&label=pypi%20downloads)](https://pypi.org/project/vps-guardian-mcp/)
+[![Tools Count](https://img.shields.io/badge/Tools-37%20Active-brightgreen.svg)](#-tools-reference)
 [![Updates](https://img.shields.io/badge/Changelog-UPDATES.md-informational.svg)](UPDATES.md)
 
 A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, storage diagnostics, scheduled task inspection, OS patch auditing, kernel crash investigations, outbound network latency benchmarks, database health checks, and isolated emergency recovery.
 
-It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structured, programmatic tools to inspect server health and resolve infrastructure issues without raw shell access or unconstrained root privileges.
+It provides next-generation AI developer tools (Google Antigravity 2.0, Claude Code, Cursor, OpenAI Codex, Windsurf) with structured, programmatic capabilities to inspect server health and resolve infrastructure issues without raw shell access or unconstrained root privileges.
 
 ---
 
@@ -17,30 +19,37 @@ It provides AI agents (Google Antigravity, Claude Desktop, Cursor) with structur
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.8.1` (See [UPDATES.md](UPDATES.md)) |
-| **Active MCP Tools** | **31 tools** |
-| **MCP Resources** | `vps://system-overview`, `vps://security-dashboard` |
+| **Version** | `0.9.0` (See [UPDATES.md](UPDATES.md)) |
+| **Active MCP Tools** | **37 tools** |
+| **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
+| **Downloads & Adoption** | [![Downloads](https://img.shields.io/github/downloads/murzirius/VPS-Guardian-MCP/total?color=blue&label=downloads)](https://github.com/murzirius/VPS-Guardian-MCP/releases) / [PyPI](https://pypi.org/project/vps-guardian-mcp/) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch Linux) |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
-| **Compatible Clients** | Google Antigravity, Anthropic Claude Desktop, Cursor IDE, Zed, any MCP client |
+| **Compatible Modern Clients** | Google Antigravity 2.0, Claude Code, Cursor IDE, OpenAI Codex / ChatGPT, Windsurf |
 
 ---
 
 ## ✨ Core Features
 
-### 1. 🖥️ System & Resource Monitoring (`src/monitor.py`)
+### 1. 🖥️ System & Resource Monitoring (`src/monitor.py` & `src/proc_deep.py`)
 - **`get_system_health`**: Collects a comprehensive system snapshot including per-core CPU utilization, RAM and Swap metrics, root filesystem capacity, Disk I/O counters (read/write operations and throughput), Network I/O metrics, and humanized uptime.
-- **`get_top_processes`**: Identifies top resource-consuming processes ranked by CPU or memory usage, detailing PID, user, memory RSS, status, and command line summaries.
+- **`get_top_processes`**: Identifies top resource-consuming processes ranked by CPU or memory usage, detailing PID, user, memory RSS, status, and command line summaries using two-pass selective inspection.
+- **`get_process_details`**: Exhaustive runtime profiling of a specific PID including parent/children hierarchy, CPU percentage, user/system times, thread counts, RSS/VMS/shared memory maps, open file descriptor counts (`num_fds`), open files sample, active network sockets, I/O counters, and sanitized environment variables.
+- **`detect_zombie_processes`**: Scans the process table for defunct/zombie processes, identifies their non-reaping parent processes (PPID, command line), and provides diagnostic instructions for clearing stalled processes.
+- **`check_system_limits`**: Audits Linux kernel and system limits: system-wide file descriptors (`/proc/sys/fs/file-nr` vs `fs.file-max`) and process NOFILE limits, process/thread capacity (`/proc/sys/kernel/pid_max` and NPROC), virtual memory parameters (`vm.swappiness`, `vm.vfs_cache_pressure`, `vm.max_map_count`), and socket backlog limits (`somaxconn`, `tcp_max_syn_backlog`), flagging warnings when utilization exceeds 80%.
 - **`check_service_status`**: Queries systemd service state (`active`, `enabled`, recent unit logs) for critical services like Nginx, MySQL, PostgreSQL, and UFW.
 - **`get_failed_systemd_units`**: Performs rapid system audits to discover degraded or failed systemd units (`systemctl --failed`).
 - **`read_service_logs`**: Extracts service logs with pure Python-level keyword/regex filtering (`grep_filter`), eliminating command injection vectors.
 
-### 2. 🐳 Docker Management (`src/docker_manager.py`)
+### 2. 🐳 Docker Management & Control (`src/docker_manager.py`)
 - **`list_docker_containers`**: Inspects container inventory, reporting status, image tags, port forwards, bind mounts/volumes, health checks, and exit codes.
 - **`get_docker_container_logs`**: Safely retrieves stdout and stderr streams for any container with bounded line limits.
 - **`get_docker_stats`**: Streams live resource telemetry (CPU %, memory usage and limits, network RX/TX, block I/O) equivalent to `docker stats`.
+- **`docker_container_action`**: Safely executes container lifecycle operations (`start`, `stop`, `restart`, `pause`, `unpause`) with input validation (`CONTAINER_NAME_REGEX`) and configurable shutdown grace timeouts.
+- **`inspect_docker_container`**: Detailed architectural introspection of any container, returning network addresses, port mappings, mounted volumes/binds, healthcheck history, restart policies, resource limits, and environment variables with automated credential masking.
+- **`clean_docker_garbage`**: Reclaims disk space by safely pruning dangling images, stopped containers, unused volumes, and orphan networks (`prune_type`: `'containers'`, `'images'`, `'volumes'`, `'networks'`, `'all'`).
 
 ### 3. 🌐 Network Security & Firewall Diagnostics (`src/network.py`)
 - **`get_open_ports`**: Discovers all open and listening network ports (TCP and UDP, IPv4 and IPv6) with corresponding bound processes and PIDs.
@@ -169,9 +178,12 @@ sudo usermod -aG systemd-journal $USER
 
 ---
 
-## ⚙️ Client Configuration
+## ⚙️ Modern Client Configuration
 
-Configure your MCP client (Antigravity `mcp_config.json` or Claude Desktop `claude_desktop_config.json`) to establish a clean stdio connection via SSH:
+VPS-Guardian-MCP communicates over standard input/output (`stdio`) through an OpenSSH tunnel. Configure any modern MCP client below:
+
+### 1. 🚀 Google Antigravity 2.0 / Antigravity IDE
+Add to your global or workspace configuration in `~/.gemini/config/mcp_config.json`:
 
 ```json
 {
@@ -180,12 +192,88 @@ Configure your MCP client (Antigravity `mcp_config.json` or Claude Desktop `clau
       "command": "ssh",
       "args": [
         "-q",
-        "-i",
-        "C:/Users/<Username>/.ssh/id_ed25519",
-        "-o",
-        "LogLevel=ERROR",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
+        "-i", "C:/Users/<Username>/.ssh/id_ed25519",
+        "-o", "LogLevel=ERROR",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ServerAliveInterval=15",
+        "-o", "ServerAliveCountMax=4",
+        "-o", "TCPKeepAlive=yes",
+        "-o", "ConnectTimeout=10",
+        "root@<YOUR_VPS_IP>",
+        "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp"
+      ]
+    }
+  }
+}
+```
+
+### 2. ⚡ Anthropic Claude Code (CLI Agent)
+Add the server with a single terminal command:
+
+```bash
+claude mcp add vps-guardian -- ssh -q -i ~/.ssh/id_ed25519 -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes root@<YOUR_VPS_IP> /opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp
+```
+
+### 3. 💻 Cursor IDE
+Add to your project or user configuration in `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "vps-guardian": {
+      "command": "ssh",
+      "args": [
+        "-q",
+        "-i", "~/.ssh/id_ed25519",
+        "-o", "LogLevel=ERROR",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ServerAliveInterval=15",
+        "-o", "ServerAliveCountMax=4",
+        "-o", "TCPKeepAlive=yes",
+        "root@<YOUR_VPS_IP>",
+        "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp"
+      ]
+    }
+  }
+}
+```
+
+### 4. 🧠 OpenAI Codex / ChatGPT Desktop
+Configure in your local MCP configuration file:
+
+```json
+{
+  "mcpServers": {
+    "vps-guardian": {
+      "command": "ssh",
+      "args": [
+        "-q",
+        "-i", "~/.ssh/id_ed25519",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ServerAliveInterval=15",
+        "-o", "ServerAliveCountMax=4",
+        "root@<YOUR_VPS_IP>",
+        "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp"
+      ]
+    }
+  }
+}
+```
+
+### 5. 🌊 Codeium Windsurf
+Add to `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "vps-guardian": {
+      "command": "ssh",
+      "args": [
+        "-q",
+        "-i", "~/.ssh/id_ed25519",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ServerAliveInterval=15",
+        "-o", "ServerAliveCountMax=4",
         "root@<YOUR_VPS_IP>",
         "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp"
       ]
@@ -196,18 +284,24 @@ Configure your MCP client (Antigravity `mcp_config.json` or Claude Desktop `clau
 
 ---
 
-## 🛠️ Tools Reference
+## 🛠️ Tools Reference (37 Active Tools)
 
 | Tool Name | Parameters | Description |
 | :--- | :--- | :--- |
 | `get_system_health` | *none* | Complete system snapshot (per-core CPU, RAM, Swap, Disk I/O, Network I/O, Uptime) |
-| `get_top_processes` | `sort_by` (*"cpu"* / *"memory"*), `limit` (*int*) | Top resource-consuming processes with memory and command details |
+| `get_top_processes` | `sort_by` (*"cpu"* / *"memory"*), `limit` (*int*) | Top resource-consuming processes with memory and command details (low CPU two-pass) |
+| `get_process_details` | `pid` (*int*) | In-depth diagnostics for a specific PID (threads, memory maps, open files, sockets, I/O) |
+| `detect_zombie_processes` | *none* | Scans system process table for defunct/zombie processes and identifies non-reaping parents |
+| `check_system_limits` | *none* | Audits system limits (file descriptors `/proc/sys/fs/file-nr`, max PIDs, virtual memory, sockets) |
 | `check_service_status` | `service_name` (*string*) | Detailed systemd unit operational status and recent unit logs |
 | `get_failed_systemd_units`| *none* | Discovers degraded or failed systemd units across the operating system |
 | `read_service_logs` | `service_name` (*string*), `lines_count` (*int*), `grep_filter` (*string*) | Retrieves service logs with safe, pure-Python keyword filtering |
 | `list_docker_containers` | `all` (*bool*, default: *true*) | Lists all Docker containers with port forwards, volumes, and health state |
 | `get_docker_container_logs` | `container_name` (*string*), `lines_count` (*int*) | Fetches stdout/stderr logs from a specific container |
 | `get_docker_stats` | *none* | Live telemetry for running containers (CPU %, RAM, Network and Block I/O) |
+| `docker_container_action` | `container_name` (*string*), `action` (*string*), `timeout` (*int*) | Safely executes container lifecycle operations (`start`, `stop`, `restart`, `pause`, `unpause`) |
+| `inspect_docker_container` | `container_name` (*string*) | Deep container introspection (network, ports, mounts, restart policy, masked env vars) |
+| `clean_docker_garbage` | `prune_type` (*string*, default: *"all"*) | Prunes dangling images, stopped containers, unused volumes, and networks to reclaim disk space |
 | `get_open_ports` | *none* | Discovers all listening ports (TCP/UDP, IPv4/IPv6) with process names and PIDs |
 | `get_ufw_status` | *none* | Audits UFW firewall state, default traffic policies, and active rules |
 | `view_file_content` | `file_path` (*string*), `max_bytes` (*int*) | Reads authorized configuration files with size bounding |
@@ -231,6 +325,22 @@ Configure your MCP client (Antigravity `mcp_config.json` or Claude Desktop `clau
 | `get_database_health` | *none* | Audits local database services (Redis, PostgreSQL, MySQL/MariaDB, SQLite) |
 | `execute_recovery` | `action_name` (*string*), `target` (*string*, optional) | Executes whitelisted operations (`restart_service`, `clean_docker_cache`, `clean_system_logs`, `kill_process`, `vacuum_systemd_journal`, `clean_package_cache`, `apply_security_updates`, `update_guardian`) |
 | `create_backup` | `backup_type` (*string*), `source_path` (*string*) | Generates isolated `.tar.gz` archives in `/var/backups/vps-guardian/` |
+
+---
+
+## 📡 MCP Resources & Prompts
+
+### Resources
+- **`vps://system-overview`**: Continuous live JSON system snapshot including per-core CPU, RAM, swap, disk I/O, network telemetry, and ambient operating system patch warnings.
+- **`vps://security-dashboard`**: Unified security telemetry consolidating UFW firewall status, Fail2ban jails, recent failed authentication attempts, and open listening ports.
+- **`vps://docker-overview`**: Live multi-container overview aggregating Docker daemon status, container inventories, health metrics, and disk space reclamation opportunities.
+
+### Prompts
+- **`triage_server_incident`**: Systematic runbook guiding the AI step-by-step through incident investigation (CPU/RAM, failed systemd units, journal errors, authentication logs).
+- **`emergency_disk_cleanup`**: Guided procedure for identifying disk space saturation (>90%) and safely applying bounded log vacuums, container caches, and APT cleanup.
+- **`security_and_update_audit`**: Comprehensive security auditing routine assessing CVE patches, SSH daemon settings, brute-force activity, and cron task integrity.
+- **`troubleshoot_application_crash`**: Incident diagnosis runbook investigating Out-Of-Memory terminations, kernel hardware/storage errors, and database reachability.
+
 
 ---
 
