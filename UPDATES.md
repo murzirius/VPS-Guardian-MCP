@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.10.0] - 2026-09-11
+
+### Added
+- **Server-Enforced Safety Gate (`src/safety.py`)**:
+  - Added `read-only` (default), `controlled`, and `unrestricted` execution modes.
+  - Added short-lived, single-use confirmation tokens bound to the exact tool and parameters.
+  - Protected file writes, Docker lifecycle/prune actions, recovery operations, and backup creation.
+  - Added redacted JSONL audit logging plus `get_safety_status` and `get_audit_events` tools.
+- **Unified Incident Report (`src/incident.py`)**:
+  - Added `generate_incident_report`, combining system pressure, failed units, Docker health,
+    OOM and kernel events, database status, updates, SSH posture, and optional open ports.
+  - Findings are ordered by `critical`, `warning`, and `info` severity.
+- **Continuous Integration**:
+  - Added GitHub Actions coverage for Python 3.10 through 3.14.
+  - Added syntax/undefined-name linting, dependency checks, coverage reporting, and metadata tests.
+- Total tool inventory increased from 37 to **40 active MCP tools**.
+
+### Changed
+- State-changing operations now default to disabled. Set `VPS_GUARDIAN_MODE=controlled`
+  to enable the recommended two-step confirmation flow.
+- Synchronized Python, npm, documentation, and runner versions at `0.10.0`.
+
+### Fixed
+- Added the missing `tempfile` import used by the Windows/fallback backup destination.
+
+---
+
 ## [0.9.0] - 2026-09-10
 
 ### Added

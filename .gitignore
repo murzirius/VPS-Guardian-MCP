@@ -54,3 +54,5 @@ htmlcov/
 
 # Logs
 *.log
+/logs/
+/backups/

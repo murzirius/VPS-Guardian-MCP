@@ -19,12 +19,18 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 import time
 from typing import Any, Dict, List, Optional
 
 import psutil
 
 logger = logging.getLogger("vps_guardian.recover")
+
+try:
+    from src.safety import record_audit_event, request_authorization
+except ImportError:
+    from safety import record_audit_event, request_authorization
 
 # Whitelist of permitted recovery actions
 ALLOWED_RECOVERY_ACTIONS = {
@@ -199,7 +205,9 @@ def _fetch_systemd_logs(service: str, lines_count: int) -> Dict[str, Any]:
 # ============================================================================
 
 def run_recovery_action(
-    action_name: str, target: Optional[str] = None
+    action_name: str,
+    target: Optional[str] = None,
+    confirmation_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute an isolated, predefined VPS recovery action.
 
@@ -225,27 +233,46 @@ def run_recovery_action(
             ),
         }
 
+    operation_parameters = {"action_name": action_clean, "target": target}
+    authorization = request_authorization(
+        operation="execute_recovery",
+        parameters=operation_parameters,
+        impact=ALLOWED_RECOVERY_ACTIONS[action_clean],
+        confirmation_token=confirmation_token,
+    )
+    if authorization is not None:
+        return authorization
+
     # Dispatch to specific action handlers
     if action_clean == "restart_service":
-        return _action_restart_service(target)
+        result = _action_restart_service(target)
     elif action_clean == "restart_nginx":
-        return _action_restart_service("nginx")
+        result = _action_restart_service("nginx")
     elif action_clean == "clean_docker_cache":
-        return _action_clean_docker_cache()
+        result = _action_clean_docker_cache()
     elif action_clean == "clean_system_logs":
-        return _action_clean_system_logs()
+        result = _action_clean_system_logs()
     elif action_clean == "kill_process":
-        return _action_kill_process(target)
+        result = _action_kill_process(target)
     elif action_clean == "vacuum_systemd_journal":
-        return _action_vacuum_journal(target)
+        result = _action_vacuum_journal(target)
     elif action_clean == "clean_package_cache":
-        return _action_clean_package_cache()
+        result = _action_clean_package_cache()
     elif action_clean == "apply_security_updates":
-        return _action_apply_security_updates()
+        result = _action_apply_security_updates()
     elif action_clean == "update_guardian":
-        return _action_update_guardian()
+        result = _action_update_guardian()
+    else:
+        result = {
+            "status": "error",
+            "success": False,
+            "error": f"Handler not implemented for '{action_clean}'.",
+        }
 
-    return {"status": "error", "success": False, "error": f"Handler not implemented for '{action_clean}'."}
+    result["audit_log_path"] = record_audit_event(
+        "execute_recovery", operation_parameters, result
+    )
+    return result
 
 
 def _action_restart_service(service_name: Optional[str]) -> Dict[str, Any]:
@@ -781,7 +808,11 @@ def _action_update_guardian() -> Dict[str, Any]:
 # Safe Backup Generation
 # ============================================================================
 
-def create_backup(backup_type: str, source_path: str) -> Dict[str, Any]:
+def create_backup(
+    backup_type: str,
+    source_path: str,
+    confirmation_token: Optional[str] = None,
+) -> Dict[str, Any]:
     """Create a compressed tar.gz archive of an authorized directory.
 
     Archives are stored in an isolated, restricted directory (/var/backups/vps-guardian/).
@@ -827,6 +858,25 @@ def create_backup(backup_type: str, source_path: str) -> Dict[str, Any]:
     if not os.path.exists(canonical_source):
         return {"status": "error", "error": f"Source path '{canonical_source}' does not exist."}
 
+    operation_parameters = {
+        "backup_type": str(backup_type),
+        "source_path": canonical_source,
+    }
+    authorization = request_authorization(
+        operation="create_backup",
+        parameters=operation_parameters,
+        impact="Read the authorized source and create a compressed backup archive.",
+        confirmation_token=confirmation_token,
+    )
+    if authorization is not None:
+        return authorization
+
+    def audited(result: Dict[str, Any]) -> Dict[str, Any]:
+        result["audit_log_path"] = record_audit_event(
+            "create_backup", operation_parameters, result
+        )
+        return result
+
     # Setup isolated backup directory
     backup_dest_dir = "/var/backups/vps-guardian" if os.name != "nt" else os.path.join(".", "backups")
     try:
@@ -859,7 +909,7 @@ def create_backup(backup_type: str, source_path: str) -> Dict[str, Any]:
         archive_size = os.path.getsize(archive_filepath)
         duration = round(time.time() - start_time, 2)
 
-        return {
+        return audited({
             "status": "ok",
             "success": True,
             "backup_type": backup_type,
@@ -870,17 +920,18 @@ def create_backup(backup_type: str, source_path: str) -> Dict[str, Any]:
             "files_archived": file_count,
             "duration_seconds": duration,
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        }
+        })
     except PermissionError as exc:
         if os.path.exists(archive_filepath):
             try:
                 os.remove(archive_filepath)
             except Exception:
                 pass
-        return {
+        return audited({
             "status": "error",
+            "success": False,
             "error": f"Permission denied creating backup archive: {str(exc)}",
-        }
+        })
     except Exception as exc:
         logger.error(f"Error creating backup for '{canonical_source}': {exc}", exc_info=True)
         if os.path.exists(archive_filepath):
@@ -888,7 +939,8 @@ def create_backup(backup_type: str, source_path: str) -> Dict[str, Any]:
                 os.remove(archive_filepath)
             except Exception:
                 pass
-        return {
+        return audited({
             "status": "error",
+            "success": False,
             "error": f"Failed creating backup: {str(exc)}",
-        }
+        })

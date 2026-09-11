@@ -102,6 +102,11 @@ try:
         create_backup as _create_backup,
         run_recovery_action as _run_recovery_action,
     )
+    from src.incident import generate_incident_report as _generate_incident_report
+    from src.safety import (
+        get_audit_events as _get_audit_events,
+        get_safety_status as _get_safety_status,
+    )
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -167,6 +172,11 @@ except ImportError:
     from recover import (
         create_backup as _create_backup,
         run_recovery_action as _run_recovery_action,
+    )
+    from incident import generate_incident_report as _generate_incident_report
+    from safety import (
+        get_audit_events as _get_audit_events,
+        get_safety_status as _get_safety_status,
     )
 
 # Initialize FastMCP Server
@@ -386,19 +396,30 @@ def get_docker_stats() -> str:
 
 
 @mcp.tool()
-def docker_container_action(container_name: str, action: str, timeout: int = 10) -> str:
+def docker_container_action(
+    container_name: str,
+    action: str,
+    timeout: int = 10,
+    confirmation_token: Optional[str] = None,
+) -> str:
     """Safely execute lifecycle operations (start, stop, restart, pause, unpause) on a container.
 
     Args:
         container_name: Name or short/full ID of the target Docker container.
         action: Desired action ('start', 'stop', 'restart', 'pause', 'unpause').
         timeout: Stop/restart timeout in seconds before forcible kill (default: 10).
+        confirmation_token: Single-use token returned by the preceding plan call.
 
     Returns:
         JSON string detailing previous status, new status, and action outcome.
     """
     try:
-        data = _docker_container_action(container_name=container_name, action=action, timeout=timeout)
+        data = _docker_container_action(
+            container_name=container_name,
+            action=action,
+            timeout=timeout,
+            confirmation_token=confirmation_token,
+        )
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in docker_container_action: {exc}", exc_info=True)
@@ -424,17 +445,24 @@ def inspect_docker_container(container_name: str) -> str:
 
 
 @mcp.tool()
-def clean_docker_garbage(prune_type: str = "all") -> str:
+def clean_docker_garbage(
+    prune_type: str = "all",
+    confirmation_token: Optional[str] = None,
+) -> str:
     """Safely reclaim disk space by pruning dangling images, stopped containers, unused volumes, and networks.
 
     Args:
         prune_type: Category to prune ('containers', 'images', 'volumes', 'networks', 'all'). Default is 'all'.
+        confirmation_token: Single-use token returned by the preceding plan call.
 
     Returns:
         JSON string detailing deleted items and total disk capacity reclaimed.
     """
     try:
-        data = _clean_docker_garbage(prune_type=prune_type)
+        data = _clean_docker_garbage(
+            prune_type=prune_type,
+            confirmation_token=confirmation_token,
+        )
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in clean_docker_garbage: {exc}", exc_info=True)
@@ -504,7 +532,12 @@ def view_file_content(file_path: str, max_bytes: int = 50000) -> str:
 
 
 @mcp.tool()
-def write_file_content(file_path: str, content: str, backup: bool = True) -> str:
+def write_file_content(
+    file_path: str,
+    content: str,
+    backup: bool = True,
+    confirmation_token: Optional[str] = None,
+) -> str:
     """Atomically write or update a configuration file within authorized directories.
 
     Creates an automatic timestamped backup (.bak.<timestamp>) before overwriting.
@@ -514,12 +547,18 @@ def write_file_content(file_path: str, content: str, backup: bool = True) -> str
         file_path: Path to the target configuration file.
         content: Text content to write.
         backup: Create a backup file before writing (default: True).
+        confirmation_token: Single-use token returned by the preceding plan call.
 
     Returns:
         JSON string indicating write status and backup location.
     """
     try:
-        data = _write_file_content(file_path=file_path, content=content, backup=backup)
+        data = _write_file_content(
+            file_path=file_path,
+            content=content,
+            backup=backup,
+            confirmation_token=confirmation_token,
+        )
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in write_file_content: {exc}", exc_info=True)
@@ -882,11 +921,63 @@ def get_database_health() -> str:
 
 
 # ============================================================================
-# 12. Emergency Recovery & Backup Tools
+# 12. Incident Triage, Safety & Audit Tools
 # ============================================================================
 
 @mcp.tool()
-def execute_recovery(action_name: str, target: Optional[str] = None) -> str:
+def generate_incident_report(
+    include_updates: bool = True,
+    include_security: bool = True,
+    include_network: bool = False,
+) -> str:
+    """Generate one prioritized, read-only VPS incident report.
+
+    Args:
+        include_updates: Include operating-system patch and reboot status.
+        include_security: Include SSH hardening assessment.
+        include_network: Include listening ports; disabled by default to keep reports compact.
+
+    Returns:
+        JSON string with severity-ranked findings and the underlying diagnostic sections.
+    """
+    try:
+        data = _generate_incident_report(
+            include_updates=include_updates,
+            include_security=include_security,
+            include_network=include_network,
+        )
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in generate_incident_report: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def get_safety_status() -> str:
+    """Return the active safety mode, confirmation policy, TTL, and audit destination."""
+    return json.dumps(_get_safety_status(), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_audit_events(limit: int = 50) -> str:
+    """Return recent redacted audit events for state-changing operations.
+
+    Args:
+        limit: Number of newest events to return (1-500, default 50).
+    """
+    return json.dumps(_get_audit_events(limit=limit), indent=2, ensure_ascii=False)
+
+
+# ============================================================================
+# 13. Emergency Recovery & Backup Tools
+# ============================================================================
+
+@mcp.tool()
+def execute_recovery(
+    action_name: str,
+    target: Optional[str] = None,
+    confirmation_token: Optional[str] = None,
+) -> str:
     """Execute an emergency recovery operation from a strictly whitelisted list.
 
     Allowed actions:
@@ -903,12 +994,17 @@ def execute_recovery(action_name: str, target: Optional[str] = None) -> str:
     Args:
         action_name: The exact recovery action to execute.
         target: Optional target parameter required by certain actions.
+        confirmation_token: Single-use token returned by the preceding plan call.
 
     Returns:
         JSON string with operation outcome, freed resources, or security error.
     """
     try:
-        data = _run_recovery_action(action_name=action_name, target=target)
+        data = _run_recovery_action(
+            action_name=action_name,
+            target=target,
+            confirmation_token=confirmation_token,
+        )
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in execute_recovery: {exc}", exc_info=True)
@@ -916,7 +1012,11 @@ def execute_recovery(action_name: str, target: Optional[str] = None) -> str:
 
 
 @mcp.tool()
-def create_backup(backup_type: str, source_path: str) -> str:
+def create_backup(
+    backup_type: str,
+    source_path: str,
+    confirmation_token: Optional[str] = None,
+) -> str:
     """Create a compressed tar.gz archive of an authorized website or configuration directory.
 
     Archives are saved into an isolated backup repository (/var/backups/vps-guardian/).
@@ -925,12 +1025,17 @@ def create_backup(backup_type: str, source_path: str) -> str:
     Args:
         backup_type: Identifier label for the archive (e.g. 'site', 'config', 'data').
         source_path: Target directory to archive.
+        confirmation_token: Single-use token returned by the preceding plan call.
 
     Returns:
         JSON string with archive file path, size, file count, and duration.
     """
     try:
-        data = _create_backup(backup_type=backup_type, source_path=source_path)
+        data = _create_backup(
+            backup_type=backup_type,
+            source_path=source_path,
+            confirmation_token=confirmation_token,
+        )
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in create_backup: {exc}", exc_info=True)

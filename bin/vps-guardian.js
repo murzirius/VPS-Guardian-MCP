@@ -24,6 +24,7 @@ OPTIONS:
   -i, --key <identity_file>  Path to private SSH key (e.g. ~/.ssh/id_ed25519)
   -p, --port <port>          SSH port (Default: 22)
   --remote-path <path>       Path to binary on VPS (Default: /opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp)
+  --mode <mode>              Safety mode: read-only, controlled, unrestricted (Default: read-only)
   -h, --help                 Show this help message
   -v, --version              Show version
 
@@ -33,13 +34,13 @@ EXAMPLES:
     "mcpServers": {
       "vps-guardian": {
         "command": "npx",
-        "args": ["-y", "vps-guardian-mcp", "--host", "65.75.200.108", "-i", "~/.ssh/id_ed25519"]
+        "args": ["-y", "vps-guardian-mcp", "--host", "65.75.200.108", "--mode", "controlled", "-i", "~/.ssh/id_ed25519"]
       }
     }
   }
 
   # In Claude Code CLI:
-  claude mcp add vps-guardian -- npx -y vps-guardian-mcp --host 65.75.200.108 -i ~/.ssh/id_ed25519
+  claude mcp add vps-guardian -- npx -y vps-guardian-mcp --host 65.75.200.108 --mode controlled -i ~/.ssh/id_ed25519
 \n`);
 }
 
@@ -50,6 +51,7 @@ function parseArgs() {
   let key = "";
   let port = 22;
   let remotePath = "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp";
+  let mode = "read-only";
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -64,7 +66,7 @@ function parseArgs() {
         const pkg = require("../package.json");
         process.stderr.write(`vps-guardian-mcp v${pkg.version}\n`);
       } catch {
-        process.stderr.write("vps-guardian-mcp v0.9.0\n");
+        process.stderr.write("vps-guardian-mcp v0.10.0\n");
       }
       process.exit(0);
     }
@@ -79,6 +81,8 @@ function parseArgs() {
       port = parseInt(args[++i], 10) || 22;
     } else if (arg === "--remote-path" && i + 1 < args.length) {
       remotePath = args[++i];
+    } else if (arg === "--mode" && i + 1 < args.length) {
+      mode = args[++i].toLowerCase();
     } else if (!arg.startsWith("-") && !host) {
       // Positional host argument: root@1.2.3.4 or 1.2.3.4
       if (arg.includes("@")) {
@@ -91,11 +95,17 @@ function parseArgs() {
     }
   }
 
-  return { host, user, key, port, remotePath };
+  const validModes = new Set(["read-only", "controlled", "unrestricted"]);
+  if (!validModes.has(mode)) {
+    process.stderr.write(`Error: Invalid --mode '${mode}'.\n`);
+    process.exit(1);
+  }
+
+  return { host, user, key, port, remotePath, mode };
 }
 
 function main() {
-  const { host, user, key, port, remotePath } = parseArgs();
+  const { host, user, key, port, remotePath, mode } = parseArgs();
 
   if (!host) {
     process.stderr.write("Error: Missing required argument '--host <IP>'.\n");
@@ -128,7 +138,7 @@ function main() {
   }
 
   sshArgs.push(`${user}@${host}`);
-  sshArgs.push(remotePath);
+  sshArgs.push("env", `VPS_GUARDIAN_MODE=${mode}`, remotePath);
 
   // Spawn SSH with direct stdio inheritance for seamless JSON-RPC MCP streaming
   const child = spawn("ssh", sshArgs, {

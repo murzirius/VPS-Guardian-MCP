@@ -2,11 +2,12 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
+[![CI](https://github.com/murzirius/VPS-Guardian-MCP/actions/workflows/ci.yml/badge.svg)](https://github.com/murzirius/VPS-Guardian-MCP/actions/workflows/ci.yml)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%202024--11--05-green.svg)](https://modelcontextprotocol.io/)
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
 [![Release](https://img.shields.io/github/v/tag/murzirius/VPS-Guardian-MCP?color=blue&label=version)](https://github.com/murzirius/VPS-Guardian-MCP/tags)
 [![Stars](https://img.shields.io/github/stars/murzirius/VPS-Guardian-MCP?style=flat&color=yellow)](https://github.com/murzirius/VPS-Guardian-MCP/stargazers)
-[![Tools Count](https://img.shields.io/badge/Tools-37%20Active-brightgreen.svg)](#-tools-reference)
+[![Tools Count](https://img.shields.io/badge/Tools-40%20Active-brightgreen.svg)](#-tools-reference)
 [![Updates](https://img.shields.io/badge/Changelog-UPDATES.md-informational.svg)](UPDATES.md)
 
 A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, storage diagnostics, scheduled task inspection, OS patch auditing, kernel crash investigations, outbound network latency benchmarks, database health checks, and isolated emergency recovery.
@@ -19,11 +20,11 @@ It provides next-generation AI developer tools (Google Antigravity 2.0, Claude C
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.9.0` (See [UPDATES.md](UPDATES.md)) |
-| **Active MCP Tools** | **37 tools** |
+| **Version** | `0.10.0` (See [UPDATES.md](UPDATES.md)) |
+| **Active MCP Tools** | **40 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
-| **Release Status** | [v0.9.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
+| **Release Status** | [v0.10.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch Linux) |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -104,6 +105,15 @@ It provides next-generation AI developer tools (Google Antigravity 2.0, Claude C
   - `update_guardian`: Automatically updates VPS-Guardian-MCP from GitHub and refreshes the virtual environment.
 - **`create_backup`**: Creates standalone `.tar.gz` compressed archives of authorized directories inside an isolated backup repository (`/var/backups/vps-guardian/`).
 
+### 14. 🛡️ Server-Enforced Safety & Audit (`src/safety.py`)
+- **`get_safety_status`**: Reports the active execution mode, confirmation policy, token lifetime, and audit destination.
+- **`get_audit_events`**: Returns recent redacted JSONL audit events for state-changing operations.
+- State-changing tools use short-lived, single-use confirmation tokens bound to their exact parameters.
+- The default `read-only` mode blocks all state changes at the server boundary.
+
+### 15. 🚨 Unified Incident Triage (`src/incident.py`)
+- **`generate_incident_report`**: Aggregates system pressure, failed services, Docker health, OOM events, kernel errors, databases, security posture, and pending updates into one severity-ranked report.
+
 ---
 
 ## 🤖 Guidelines for AI Agents
@@ -116,7 +126,7 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 4. **Verify Configurations Before Reloading**: When modifying web server configurations, always execute `test_nginx_config` prior to invoking `execute_recovery(action_name='restart_service', target='nginx')`.
 5. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
 6. **Promptly Surface Critical Alerts**: When `check_system_updates` or `vps://system-overview` flags pending security patches or reboot requirements, prioritize alerting the operator and proposing remediation.
-7. **Require Confirmation for State-Changing Operations**: Any recovery or file modification action (`execute_recovery`, `write_file_content`, `create_backup`) must be explicitly confirmed with the operator prior to execution.
+7. **Use Server-Issued Confirmation Tokens**: In `controlled` mode, call a state-changing tool once without a token, show its impact plan to the operator, then repeat the exact call with the returned `confirmation_token`.
 
 ---
 
@@ -125,8 +135,10 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.8.1)
-│   ├── server.py            # FastMCP server, resources, prompts, and tool registry (31 tools)
+│   ├── __init__.py          # Package version (v0.10.0)
+│   ├── server.py            # FastMCP server, resources, prompts, and tool registry (40 tools)
+│   ├── safety.py            # Confirmation tokens, execution modes, and audit log
+│   ├── incident.py          # Unified severity-ranked incident report
 │   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
 │   ├── docker_manager.py    # Container inventory, logs, and live telemetry
 │   ├── network.py           # Listening ports, bound processes, and UFW rules
@@ -176,6 +188,26 @@ sudo usermod -aG docker $USER
 sudo usermod -aG systemd-journal $USER
 ```
 
+### 3. Choose a Safety Mode
+
+State-changing tools are disabled by default. Select the mode used by the remote MCP process:
+
+| Mode | Behavior |
+| :--- | :--- |
+| `read-only` | Default. Diagnostics work; writes, restarts, cleanup, backups, and updates are blocked. |
+| `controlled` | Recommended for administration. The first call returns a single-use confirmation token valid for 5 minutes. |
+| `unrestricted` | Compatibility mode. State changes execute immediately; use only in a separately secured environment. |
+
+For a controlled direct-SSH launch:
+
+```bash
+env VPS_GUARDIAN_MODE=controlled \
+    VPS_GUARDIAN_AUDIT_LOG=/var/log/vps-guardian/audit.jsonl \
+    /opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp
+```
+
+Optional: set `VPS_GUARDIAN_CONFIRM_TTL` from 30 to 3600 seconds. The default is 300.
+
 ---
 
 ## ⚙️ Modern Client Configuration
@@ -195,6 +227,7 @@ Run instantly without cloning, manual SSH parameter setup, or token registration
         "-y",
         "github:murzirius/VPS-Guardian-MCP",
         "--host", "<YOUR_VPS_IP>",
+        "--mode", "controlled",
         "-i", "~/.ssh/id_ed25519"
       ]
     }
@@ -205,7 +238,7 @@ Run instantly without cloning, manual SSH parameter setup, or token registration
 Or for **Claude Code** CLI terminal:
 
 ```bash
-claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP --host <YOUR_VPS_IP> -i ~/.ssh/id_ed25519
+claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP --host <YOUR_VPS_IP> --mode controlled -i ~/.ssh/id_ed25519
 ```
 
 ---
@@ -314,7 +347,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ---
 
-## 🛠️ Tools Reference (37 Active Tools)
+## 🛠️ Tools Reference (40 Active Tools)
 
 | Tool Name | Parameters | Description |
 | :--- | :--- | :--- |
@@ -329,13 +362,13 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `list_docker_containers` | `all` (*bool*, default: *true*) | Lists all Docker containers with port forwards, volumes, and health state |
 | `get_docker_container_logs` | `container_name` (*string*), `lines_count` (*int*) | Fetches stdout/stderr logs from a specific container |
 | `get_docker_stats` | *none* | Live telemetry for running containers (CPU %, RAM, Network and Block I/O) |
-| `docker_container_action` | `container_name` (*string*), `action` (*string*), `timeout` (*int*) | Safely executes container lifecycle operations (`start`, `stop`, `restart`, `pause`, `unpause`) |
+| `docker_container_action` | `container_name`, `action`, `timeout`, `confirmation_token` (*optional*) | Token-confirmed container lifecycle operation |
 | `inspect_docker_container` | `container_name` (*string*) | Deep container introspection (network, ports, mounts, restart policy, masked env vars) |
-| `clean_docker_garbage` | `prune_type` (*string*, default: *"all"*) | Prunes dangling images, stopped containers, unused volumes, and networks to reclaim disk space |
+| `clean_docker_garbage` | `prune_type`, `confirmation_token` (*optional*) | Token-confirmed pruning of unused Docker resources |
 | `get_open_ports` | *none* | Discovers all listening ports (TCP/UDP, IPv4/IPv6) with process names and PIDs |
 | `get_ufw_status` | *none* | Audits UFW firewall state, default traffic policies, and active rules |
 | `view_file_content` | `file_path` (*string*), `max_bytes` (*int*) | Reads authorized configuration files with size bounding |
-| `write_file_content` | `file_path` (*string*), `content` (*string*), `backup` (*bool*) | Atomically updates config files with automated `.bak` backups |
+| `write_file_content` | `file_path`, `content`, `backup`, `confirmation_token` (*optional*) | Token-confirmed atomic config update with backup |
 | `list_directory` | `dir_path` (*string*), `max_depth` (*int*) | Lists directory contents within authorized paths |
 | `test_nginx_config` | *none* | Validates Nginx configuration syntax (`nginx -t`) non-disruptively |
 | `check_ssl_certificates` | *none* | Audits SSL/TLS certificates and alerts on expirations within 14 days |
@@ -353,8 +386,11 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `test_network_connectivity` | `target_host` (*string*), `port` (*int*), `timeout_seconds` (*float*) | Benchmarks DNS, TCP handshake, and TLS latency via pure Python sockets |
 | `check_dns_health` | `domains` (*list[string]*, optional) | Audits system DNS resolver health, nameservers, and query latencies |
 | `get_database_health` | *none* | Audits local database services (Redis, PostgreSQL, MySQL/MariaDB, SQLite) |
-| `execute_recovery` | `action_name` (*string*), `target` (*string*, optional) | Executes whitelisted operations (`restart_service`, `clean_docker_cache`, `clean_system_logs`, `kill_process`, `vacuum_systemd_journal`, `clean_package_cache`, `apply_security_updates`, `update_guardian`) |
-| `create_backup` | `backup_type` (*string*), `source_path` (*string*) | Generates isolated `.tar.gz` archives in `/var/backups/vps-guardian/` |
+| `generate_incident_report` | `include_updates`, `include_security`, `include_network` (*bool*) | Produces one severity-ranked, read-only triage report |
+| `get_safety_status` | *none* | Reports execution mode, confirmation policy, token TTL, and audit path |
+| `get_audit_events` | `limit` (*int*, default: *50*) | Reads recent redacted state-change audit events |
+| `execute_recovery` | `action_name`, `target`, `confirmation_token` (*optional*) | Executes a token-confirmed whitelisted recovery operation |
+| `create_backup` | `backup_type`, `source_path`, `confirmation_token` (*optional*) | Creates a token-confirmed isolated `.tar.gz` backup |
 
 ---
 
@@ -383,6 +419,8 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 5. **Process Safety Controls**: The process killer rejects requests targeting PID 1, init, sshd, or vital core operating system processes.
 6. **Immutable Whitelists**: Execution actions are governed by fixed lookup tables.
 7. **Graceful Permission Degradation**: Missing capabilities return descriptive diagnostic payloads rather than crashing the protocol stream.
+8. **Server-Side Safety Modes**: Read-only is the default; controlled mode requires exact, short-lived, single-use confirmation tokens.
+9. **Redacted Audit Trail**: Every completed state-changing operation writes a JSONL audit event without file contents, credentials, or confirmation tokens.
 
 ---
 

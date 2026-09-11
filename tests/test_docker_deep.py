@@ -15,6 +15,22 @@ from src.docker_manager import (
 class TestDockerDeep(unittest.TestCase):
     """Test suite for Docker container lifecycle, inspection, and garbage pruning."""
 
+    def setUp(self):
+        self.env_patch = patch.dict(
+            "os.environ",
+            {"VPS_GUARDIAN_MODE": "unrestricted"},
+        )
+        self.env_patch.start()
+        self.audit_patch = patch(
+            "src.docker_manager.record_audit_event",
+            return_value="/tmp/audit.jsonl",
+        )
+        self.audit_patch.start()
+
+    def tearDown(self):
+        self.audit_patch.stop()
+        self.env_patch.stop()
+
     def test_docker_container_action_invalid_name(self):
         """Verify rejection of potentially hazardous container names."""
         res = docker_container_action("my_container; rm -rf /", "start")

@@ -14,6 +14,11 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("vps_guardian.docker")
 
+try:
+    from src.safety import record_audit_event, request_authorization
+except ImportError:
+    from safety import record_audit_event, request_authorization
+
 # Regex to prevent command/path injection in container identifiers
 CONTAINER_NAME_REGEX = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$")
 
@@ -322,7 +327,12 @@ def get_docker_stats() -> Dict[str, Any]:
         return {"status": "error", "error": f"Failed to gather docker stats: {str(exc)}", "stats": []}
 
 
-def docker_container_action(container_name: str, action: str, timeout: int = 10) -> Dict[str, Any]:
+def docker_container_action(
+    container_name: str,
+    action: str,
+    timeout: int = 10,
+    confirmation_token: Optional[str] = None,
+) -> Dict[str, Any]:
     """Safely execute a lifecycle action against a specific Docker container.
 
     Args:
@@ -356,9 +366,30 @@ def docker_container_action(container_name: str, action: str, timeout: int = 10)
     except (ValueError, TypeError):
         timeout = 10
 
+    operation_parameters = {
+        "container_name": clean_name,
+        "action": clean_action,
+        "timeout": timeout,
+    }
+    authorization = request_authorization(
+        operation="docker_container_action",
+        parameters=operation_parameters,
+        impact=f"Change Docker container runtime state using '{clean_action}'.",
+        confirmation_token=confirmation_token,
+    )
+    if authorization is not None:
+        return authorization
+
+    def audited(result: Dict[str, Any]) -> Dict[str, Any]:
+        result["audit_log_path"] = record_audit_event(
+            "docker_container_action", operation_parameters, result
+        )
+        return result
+
     client, err = _get_docker_client()
     if err:
-        return err
+        err.setdefault("success", False)
+        return audited(err)
 
     try:
         container = client.containers.get(clean_name)
@@ -379,35 +410,39 @@ def docker_container_action(container_name: str, action: str, timeout: int = 10)
         new_status = container.status
 
         logger.info(f"Container '{clean_name}' action '{clean_action}' executed successfully ({prev_status} -> {new_status})")
-        return {
+        return audited({
             "status": "ok",
+            "success": True,
             "action": clean_action,
             "container_name": container.name,
             "container_id": container.short_id,
             "previous_status": prev_status,
             "current_status": new_status,
             "message": f"Successfully performed '{clean_action}' on container '{container.name}' ({prev_status} -> {new_status}).",
-        }
+        })
     except NotFound:
-        return {
+        return audited({
             "status": "error",
+            "success": False,
             "error": f"Container '{clean_name}' not found.",
             "container_name": clean_name,
-        }
+        })
     except APIError as exc:
         logger.error(f"Docker API error during '{clean_action}' on '{clean_name}': {exc}")
-        return {
+        return audited({
             "status": "error",
+            "success": False,
             "error": f"Docker API error: {exc.explanation if hasattr(exc, 'explanation') else str(exc)}",
             "container_name": clean_name,
-        }
+        })
     except Exception as exc:
         logger.error(f"Unexpected error during '{clean_action}' on '{clean_name}': {exc}", exc_info=True)
-        return {
+        return audited({
             "status": "error",
+            "success": False,
             "error": f"Failed to execute '{clean_action}': {str(exc)}",
             "container_name": clean_name,
-        }
+        })
 
 
 def inspect_docker_container(container_name: str) -> Dict[str, Any]:
@@ -567,7 +602,10 @@ def inspect_docker_container(container_name: str) -> Dict[str, Any]:
         }
 
 
-def clean_docker_garbage(prune_type: str = "all") -> Dict[str, Any]:
+def clean_docker_garbage(
+    prune_type: str = "all",
+    confirmation_token: Optional[str] = None,
+) -> Dict[str, Any]:
     """Safely reclaim disk space by pruning unused Docker resources.
 
     Args:
@@ -584,15 +622,36 @@ def clean_docker_garbage(prune_type: str = "all") -> Dict[str, Any]:
             "error": f"Invalid prune_type '{prune_type}'. Permitted options: {', '.join(sorted(valid_types))}.",
         }
 
+    operation_parameters = {"prune_type": clean_type}
+    authorization = request_authorization(
+        operation="clean_docker_garbage",
+        parameters=operation_parameters,
+        impact=(
+            "Permanently delete unused Docker resources. Volume cleanup can remove "
+            "data that is not attached to a container."
+        ),
+        confirmation_token=confirmation_token,
+    )
+    if authorization is not None:
+        return authorization
+
+    def audited(result: Dict[str, Any]) -> Dict[str, Any]:
+        result["audit_log_path"] = record_audit_event(
+            "clean_docker_garbage", operation_parameters, result
+        )
+        return result
+
     client, err = _get_docker_client()
     if err:
-        return err
+        err.setdefault("success", False)
+        return audited(err)
 
     total_reclaimed_bytes = 0
     containers_deleted: List[str] = []
     images_deleted: List[str] = []
     volumes_deleted: List[str] = []
     networks_deleted: List[str] = []
+    cleanup_errors: List[str] = []
 
     try:
         # 1. Containers
@@ -603,6 +662,7 @@ def clean_docker_garbage(prune_type: str = "all") -> Dict[str, Any]:
                 total_reclaimed_bytes += res.get("SpaceReclaimed", 0)
             except Exception as e:
                 logger.warning(f"Containers prune error: {e}")
+                cleanup_errors.append(f"containers: {e}")
 
         # 2. Images (dangling untagged layers)
         if clean_type in ("images", "all"):
@@ -617,6 +677,7 @@ def clean_docker_garbage(prune_type: str = "all") -> Dict[str, Any]:
                 total_reclaimed_bytes += res.get("SpaceReclaimed", 0)
             except Exception as e:
                 logger.warning(f"Images prune error: {e}")
+                cleanup_errors.append(f"images: {e}")
 
         # 3. Volumes
         if clean_type in ("volumes", "all"):
@@ -626,6 +687,7 @@ def clean_docker_garbage(prune_type: str = "all") -> Dict[str, Any]:
                 total_reclaimed_bytes += res.get("SpaceReclaimed", 0)
             except Exception as e:
                 logger.warning(f"Volumes prune error: {e}")
+                cleanup_errors.append(f"volumes: {e}")
 
         # 4. Networks
         if clean_type in ("networks", "all"):
@@ -634,9 +696,11 @@ def clean_docker_garbage(prune_type: str = "all") -> Dict[str, Any]:
                 networks_deleted = res.get("NetworksDeleted") or []
             except Exception as e:
                 logger.warning(f"Networks prune error: {e}")
+                cleanup_errors.append(f"networks: {e}")
 
-        return {
-            "status": "ok",
+        return audited({
+            "status": "partial" if cleanup_errors else "ok",
+            "success": not cleanup_errors,
             "prune_type": clean_type,
             "total_space_reclaimed": _format_bytes(total_reclaimed_bytes),
             "total_space_reclaimed_bytes": total_reclaimed_bytes,
@@ -648,16 +712,18 @@ def clean_docker_garbage(prune_type: str = "all") -> Dict[str, Any]:
             "volumes_deleted": volumes_deleted[:20],
             "networks_deleted_count": len(networks_deleted),
             "networks_deleted": networks_deleted[:20],
+            "errors": cleanup_errors,
             "summary": (
                 f"Docker cleanup completed ({clean_type}). "
                 f"Reclaimed {_format_bytes(total_reclaimed_bytes)} across "
                 f"{len(containers_deleted)} containers, {len(images_deleted)} images, and {len(volumes_deleted)} volumes."
             ),
-        }
+        })
     except Exception as exc:
         logger.error(f"Error during docker cleanup: {exc}", exc_info=True)
-        return {
+        return audited({
             "status": "error",
+            "success": False,
             "error": f"Docker cleanup failed: {str(exc)}",
             "prune_type": clean_type,
-        }
+        })

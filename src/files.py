@@ -18,6 +18,11 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("vps_guardian.files")
 
+try:
+    from src.safety import record_audit_event, request_authorization
+except ImportError:
+    from safety import record_audit_event, request_authorization
+
 # Immutable whitelist of authorized configuration and web directories
 DEFAULT_ALLOWED_DIRECTORIES = [
     "/etc/nginx",
@@ -166,7 +171,10 @@ def view_file_content(file_path: str, max_bytes: int = 50000) -> Dict[str, Any]:
 
 
 def write_file_content(
-    file_path: str, content: str, backup: bool = True
+    file_path: str,
+    content: str,
+    backup: bool = True,
+    confirmation_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Atomically write or update a configuration file within authorized directories.
 
@@ -205,6 +213,26 @@ def write_file_content(
             "file_path": canonical_path,
         }
 
+    operation_parameters = {
+        "file_path": canonical_path,
+        "content": content,
+        "backup": bool(backup),
+    }
+    authorization = request_authorization(
+        operation="write_file_content",
+        parameters=operation_parameters,
+        impact="Create or replace a configuration file on disk.",
+        confirmation_token=confirmation_token,
+    )
+    if authorization is not None:
+        return authorization
+
+    def audited(result: Dict[str, Any]) -> Dict[str, Any]:
+        result["audit_log_path"] = record_audit_event(
+            "write_file_content", operation_parameters, result
+        )
+        return result
+
     backup_path = None
     existing_file = os.path.exists(canonical_path)
 
@@ -221,11 +249,11 @@ def write_file_content(
             shutil.copy2(canonical_path, stable_bak)
         except Exception as exc:
             logger.error(f"Failed to create backup of '{canonical_path}': {exc}")
-            return {
+            return audited({
                 "status": "error",
                 "error": f"Failed to create backup before writing: {str(exc)}",
                 "file_path": canonical_path,
-            }
+            })
 
     # 2. Atomic write using temporary file in same directory
     try:
@@ -260,29 +288,32 @@ def write_file_content(
                     pass
             raise exc
 
-        return {
+        return audited({
             "status": "ok",
+            "success": True,
             "file_path": canonical_path,
             "bytes_written": len(content_bytes),
             "size_human": _format_bytes(len(content_bytes)),
             "is_new_file": not existing_file,
             "backup_created": backup_path,
             "message": "File written atomically and successfully.",
-        }
+        })
 
     except PermissionError as exc:
-        return {
+        return audited({
             "status": "error",
+            "success": False,
             "error": f"Permission denied writing to '{canonical_path}': {str(exc)}",
             "file_path": canonical_path,
-        }
+        })
     except Exception as exc:
         logger.error(f"Unexpected write error for '{canonical_path}': {exc}", exc_info=True)
-        return {
+        return audited({
             "status": "error",
+            "success": False,
             "error": f"Failed writing file: {str(exc)}",
             "file_path": canonical_path,
-        }
+        })
 
 
 def list_directory(dir_path: str, max_depth: int = 1) -> Dict[str, Any]:
