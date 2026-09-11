@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.11.0] - 2026-09-11
+
+### Added
+- **Transactional Configuration Deployment (`src/deploy.py`)**:
+  - Added `plan_config_deployment`, which stages a candidate outside the live path,
+    validates it with the native Nginx or Caddyfile validator, and returns a bounded unified diff.
+  - Added `deploy_config_change`, which atomically writes a planned config, saves a backup,
+    reloads the matching systemd service, verifies it is active, and automatically restores the
+    original config when reload or health verification fails.
+  - Plans are short-lived, single-use, hash-bound to the live file version, and integrate with
+    controlled-mode confirmation tokens and redacted audit logging.
+- Total tool inventory increased from 40 to **42 active MCP tools**.
+
+### Changed
+- Refactored the internal atomic config writer so guarded transactional deployments and direct
+  writes use the same backup, permission-preservation, and atomic-replace implementation.
+
+---
+
 ## [0.10.0] - 2026-09-11
 
 ### Added

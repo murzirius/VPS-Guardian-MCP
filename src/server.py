@@ -107,6 +107,10 @@ try:
         get_audit_events as _get_audit_events,
         get_safety_status as _get_safety_status,
     )
+    from src.deploy import (
+        deploy_config_change as _deploy_config_change,
+        plan_config_deployment as _plan_config_deployment,
+    )
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -177,6 +181,10 @@ except ImportError:
     from safety import (
         get_audit_events as _get_audit_events,
         get_safety_status as _get_safety_status,
+    )
+    from deploy import (
+        deploy_config_change as _deploy_config_change,
+        plan_config_deployment as _plan_config_deployment,
     )
 
 # Initialize FastMCP Server
@@ -583,6 +591,57 @@ def list_directory(dir_path: str, max_depth: int = 1) -> str:
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in list_directory: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def plan_config_deployment(
+    file_path: str,
+    content: str,
+    service_name: Optional[str] = None,
+) -> str:
+    """Validate and preview an Nginx config or Caddyfile deployment.
+
+    The candidate is staged outside the live path, syntax-checked, and shown as
+    a bounded unified diff. No live configuration is modified. Nginx configs
+    under /etc/nginx and Caddyfiles under /etc/caddy are supported.
+
+    Args:
+        file_path: Target config path under /etc/nginx or /etc/caddy.
+        content: Complete proposed UTF-8 configuration (at most 200,000 bytes).
+        service_name: Optional matching service name (nginx or caddy).
+
+    Returns:
+        JSON plan with validation output, diff, expiry, and a confirmation token
+        in controlled mode.
+    """
+    try:
+        data = _plan_config_deployment(file_path, content, service_name)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in plan_config_deployment: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def deploy_config_change(
+    deployment_id: str,
+    confirmation_token: Optional[str] = None,
+) -> str:
+    """Commit a validated configuration plan, reload its service, and auto-rollback on failure.
+
+    Args:
+        deployment_id: Short-lived identifier returned by plan_config_deployment.
+        confirmation_token: Required only in controlled mode; bound to this plan.
+
+    Returns:
+        JSON outcome with atomic-write, reload, health-check, and rollback details.
+    """
+    try:
+        data = _deploy_config_change(deployment_id, confirmation_token)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in deploy_config_change: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
 
 

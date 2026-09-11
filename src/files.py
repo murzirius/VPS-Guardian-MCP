@@ -170,6 +170,98 @@ def view_file_content(file_path: str, max_bytes: int = 50000) -> Dict[str, Any]:
         }
 
 
+def atomic_write_file(
+    canonical_path: str,
+    content: str,
+    backup: bool = True,
+) -> Dict[str, Any]:
+    """Write a known-safe path atomically, optionally retaining a backup.
+
+    This low-level primitive intentionally performs no authorization or path
+    policy checks.  It is for internal transactional workflows only; public
+    callers must use :func:`write_file_content`.
+    """
+    parent_dir = os.path.dirname(canonical_path)
+    if not os.path.exists(parent_dir):
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"Parent directory '{parent_dir}' does not exist.",
+            "file_path": canonical_path,
+        }
+
+    backup_path = None
+    existing_file = os.path.exists(canonical_path)
+
+    if existing_file and backup:
+        timestamp_suffix = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y%m%d_%H%M%S"
+        )
+        backup_path = f"{canonical_path}.bak.{timestamp_suffix}"
+        try:
+            shutil.copy2(canonical_path, backup_path)
+            shutil.copy2(canonical_path, f"{canonical_path}.bak")
+        except Exception as exc:
+            logger.error(f"Failed to create backup of '{canonical_path}': {exc}")
+            return {
+                "status": "error",
+                "success": False,
+                "error": f"Failed to create backup before writing: {str(exc)}",
+                "file_path": canonical_path,
+            }
+
+    try:
+        content_bytes = content.encode("utf-8")
+        temp_file = tempfile.NamedTemporaryFile(
+            mode="wb", dir=parent_dir, delete=False, prefix=".guardian_tmp_"
+        )
+        temp_path = temp_file.name
+        try:
+            temp_file.write(content_bytes)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+            temp_file.close()
+            if existing_file:
+                try:
+                    os.chmod(temp_path, os.stat(canonical_path).st_mode)
+                except OSError:
+                    pass
+            os.replace(temp_path, canonical_path)
+        except Exception:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+            raise
+
+        return {
+            "status": "ok",
+            "success": True,
+            "file_path": canonical_path,
+            "bytes_written": len(content_bytes),
+            "size_human": _format_bytes(len(content_bytes)),
+            "is_new_file": not existing_file,
+            "backup_created": backup_path,
+            "message": "File written atomically and successfully.",
+        }
+    except PermissionError as exc:
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"Permission denied writing to '{canonical_path}': {str(exc)}",
+            "file_path": canonical_path,
+        }
+    except Exception as exc:
+        logger.error(f"Unexpected write error for '{canonical_path}': {exc}", exc_info=True)
+        return {
+            "status": "error",
+            "success": False,
+            "error": f"Failed writing file: {str(exc)}",
+            "file_path": canonical_path,
+        }
+
+
 def write_file_content(
     file_path: str,
     content: str,
@@ -233,87 +325,7 @@ def write_file_content(
         )
         return result
 
-    backup_path = None
-    existing_file = os.path.exists(canonical_path)
-
-    # 1. Create backup if requested and existing
-    if existing_file and backup:
-        timestamp_suffix = datetime.datetime.now(datetime.timezone.utc).strftime(
-            "%Y%m%d_%H%M%S"
-        )
-        backup_path = f"{canonical_path}.bak.{timestamp_suffix}"
-        try:
-            shutil.copy2(canonical_path, backup_path)
-            # Maintain a stable .bak link/file as well
-            stable_bak = f"{canonical_path}.bak"
-            shutil.copy2(canonical_path, stable_bak)
-        except Exception as exc:
-            logger.error(f"Failed to create backup of '{canonical_path}': {exc}")
-            return audited({
-                "status": "error",
-                "error": f"Failed to create backup before writing: {str(exc)}",
-                "file_path": canonical_path,
-            })
-
-    # 2. Atomic write using temporary file in same directory
-    try:
-        content_bytes = content.encode("utf-8")
-        temp_file = tempfile.NamedTemporaryFile(
-            mode="wb", dir=parent_dir, delete=False, prefix=".guardian_tmp_"
-        )
-        temp_path = temp_file.name
-
-        try:
-            temp_file.write(content_bytes)
-            temp_file.flush()
-            os.fsync(temp_file.fileno())
-            temp_file.close()
-
-            # Preserve original permissions if updating
-            if existing_file:
-                try:
-                    orig_stat = os.stat(canonical_path)
-                    os.chmod(temp_path, orig_stat.st_mode)
-                except Exception:
-                    pass
-
-            # Atomic rename / replace
-            os.replace(temp_path, canonical_path)
-
-        except Exception as exc:
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except Exception:
-                    pass
-            raise exc
-
-        return audited({
-            "status": "ok",
-            "success": True,
-            "file_path": canonical_path,
-            "bytes_written": len(content_bytes),
-            "size_human": _format_bytes(len(content_bytes)),
-            "is_new_file": not existing_file,
-            "backup_created": backup_path,
-            "message": "File written atomically and successfully.",
-        })
-
-    except PermissionError as exc:
-        return audited({
-            "status": "error",
-            "success": False,
-            "error": f"Permission denied writing to '{canonical_path}': {str(exc)}",
-            "file_path": canonical_path,
-        })
-    except Exception as exc:
-        logger.error(f"Unexpected write error for '{canonical_path}': {exc}", exc_info=True)
-        return audited({
-            "status": "error",
-            "success": False,
-            "error": f"Failed writing file: {str(exc)}",
-            "file_path": canonical_path,
-        })
+    return audited(atomic_write_file(canonical_path, content, backup=backup))
 
 
 def list_directory(dir_path: str, max_depth: int = 1) -> Dict[str, Any]:
