@@ -120,8 +120,9 @@ class TestSafetyGate(unittest.TestCase):
     def test_file_write_returns_plan_without_touching_file(self):
         target = os.path.join(os.getcwd(), "safety-plan-test.conf")
         self.assertFalse(os.path.exists(target))
-        with patch.dict(os.environ, {"VPS_GUARDIAN_MODE": "controlled"}):
-            result = write_file_content(target, "server { listen 80; }")
+        with patch("src.files.is_path_permitted", return_value=(True, target)):
+            with patch.dict(os.environ, {"VPS_GUARDIAN_MODE": "controlled"}):
+                result = write_file_content(target, "server { listen 80; }")
         self.assertEqual(result["status"], "confirmation_required")
         self.assertFalse(os.path.exists(target))
 
