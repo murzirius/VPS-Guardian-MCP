@@ -7,7 +7,7 @@
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
 [![Release](https://img.shields.io/github/v/tag/murzirius/VPS-Guardian-MCP?color=blue&label=version)](https://github.com/murzirius/VPS-Guardian-MCP/tags)
 [![Stars](https://img.shields.io/github/stars/murzirius/VPS-Guardian-MCP?style=flat&color=yellow)](https://github.com/murzirius/VPS-Guardian-MCP/stargazers)
-[![Tools Count](https://img.shields.io/badge/Tools-42%20Active-brightgreen.svg)](#-tools-reference)
+[![Tools Count](https://img.shields.io/badge/Tools-45%20Active-brightgreen.svg)](#-tools-reference)
 [![Updates](https://img.shields.io/badge/Changelog-UPDATES.md-informational.svg)](UPDATES.md)
 
 A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, storage diagnostics, scheduled task inspection, OS patch auditing, kernel crash investigations, outbound network latency benchmarks, database health checks, and isolated emergency recovery.
@@ -20,11 +20,11 @@ It provides next-generation AI developer tools (Google Antigravity 2.0, Claude C
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.11.0` (See [UPDATES.md](UPDATES.md)) |
-| **Active MCP Tools** | **42 tools** |
+| **Version** | `0.12.0` (See [UPDATES.md](UPDATES.md)) |
+| **Active MCP Tools** | **45 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
-| **Release Status** | [v0.11.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
+| **Release Status** | [v0.12.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch Linux) |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -119,6 +119,11 @@ It provides next-generation AI developer tools (Google Antigravity 2.0, Claude C
 - **`deploy_config_change`**: Atomically writes the validated plan, creates a backup, reloads the matching service, verifies it is active, and restores the prior configuration if reload or health validation fails.
 - Plans are bound to the current file hash; a concurrent file change is rejected instead of overwritten.
 
+### 17. 📸 State Baselines & Drift Detection (`src/snapshot.py`)
+- **`create_system_snapshot`**: Saves a baseline of ports, failed units, cron/timers, Docker inventory, and optional configuration hashes without storing config or cron-command content.
+- **`list_system_snapshots`**: Lists retained baseline metadata.
+- **`compare_system_snapshots`**: Prioritizes changes between two snapshots: failed units, new exposed ports, scheduled-task drift, Docker changes, and config hash changes.
+
 ---
 
 ## 🤖 Guidelines for AI Agents
@@ -129,9 +134,10 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 2. **Follow the Principle of Least Privilege**: Use read-only diagnostic tools first before suggesting or applying changes.
 3. **Diagnose Mysterious Crashes Methodically**: When an application or container terminates without obvious error logs, always run `check_oom_events` and `check_kernel_errors` to identify memory exhaustion or segfaults before restarting.
 4. **Deploy Web Configurations Transactionally**: For supported Nginx configs and Caddyfiles, use `plan_config_deployment` first, then `deploy_config_change`; it validates, backs up, reloads, checks service health, and rolls back automatically on failure.
-5. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
-6. **Promptly Surface Critical Alerts**: When `check_system_updates` or `vps://system-overview` flags pending security patches or reboot requirements, prioritize alerting the operator and proposing remediation.
-7. **Use Server-Issued Confirmation Tokens**: In `controlled` mode, call a state-changing tool once without a token, show its impact plan to the operator, then repeat the exact call with the returned `confirmation_token`.
+5. **Establish and Review Baselines**: Create a snapshot after a known-good deployment, then compare it before remediation. Treat critical or warning drift as evidence to investigate, not authorization to change a host.
+6. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
+7. **Promptly Surface Critical Alerts**: When `check_system_updates` or `vps://system-overview` flags pending security patches or reboot requirements, prioritize alerting the operator and proposing remediation.
+8. **Use Server-Issued Confirmation Tokens**: In `controlled` mode, call a state-changing tool once without a token, show its impact plan to the operator, then repeat the exact call with the returned `confirmation_token`.
 
 ---
 
@@ -140,11 +146,12 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.11.0)
-│   ├── server.py            # FastMCP server, resources, prompts, and tool registry (42 tools)
+│   ├── __init__.py          # Package version (v0.12.0)
+│   ├── server.py            # FastMCP server, resources, prompts, and tool registry (45 tools)
 │   ├── safety.py            # Confirmation tokens, execution modes, and audit log
 │   ├── incident.py          # Unified severity-ranked incident report
 │   ├── deploy.py            # Validated config deployment, reload health check, and rollback
+│   ├── snapshot.py          # Privacy-preserving state baseline and drift comparison
 │   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
 │   ├── docker_manager.py    # Container inventory, logs, and live telemetry
 │   ├── network.py           # Listening ports, bound processes, and UFW rules
@@ -353,7 +360,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ---
 
-## 🛠️ Tools Reference (42 Active Tools)
+## 🛠️ Tools Reference (45 Active Tools)
 
 | Tool Name | Parameters | Description |
 | :--- | :--- | :--- |
@@ -378,6 +385,9 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `list_directory` | `dir_path` (*string*), `max_depth` (*int*) | Lists directory contents within authorized paths |
 | `plan_config_deployment` | `file_path`, `content`, `service_name` (*optional*) | Validates and diffs an Nginx config/Caddyfile candidate without changing the live config |
 | `deploy_config_change` | `deployment_id`, `confirmation_token` (*optional*) | Atomically deploys a plan, reloads it, checks health, and rolls back on failure |
+| `create_system_snapshot` | `label` (*optional*), `include_config_hashes` (*bool*) | Saves a privacy-preserving VPS state baseline |
+| `list_system_snapshots` | `limit` (*int*) | Lists stored baseline metadata |
+| `compare_system_snapshots` | `baseline_id`, `current_id` | Prioritizes infrastructure drift between two snapshots |
 | `test_nginx_config` | *none* | Validates Nginx configuration syntax (`nginx -t`) non-disruptively |
 | `check_ssl_certificates` | *none* | Audits SSL/TLS certificates and alerts on expirations within 14 days |
 | `list_virtual_hosts` | *none* | Inspects active Nginx virtual hosts, listening ports, SSL, and proxies |

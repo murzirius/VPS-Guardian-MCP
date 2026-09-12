@@ -1,6 +1,6 @@
 {
   "name": "vps-guardian-mcp",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Secure Model Context Protocol (MCP) server for remote Linux VPS observability, Docker management, and recovery.",
   "main": "bin/vps-guardian.js",
   "bin": {

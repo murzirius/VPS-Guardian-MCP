@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.12.0] - 2026-09-12
+
+### Added
+- **State Baselines & Drift Detection (`src/snapshot.py`)**:
+  - Added `create_system_snapshot`, `list_system_snapshots`, and `compare_system_snapshots`.
+  - Snapshots capture ports, failed units, cron/timers, Docker metadata, and optional config hashes;
+    they never persist configuration contents or cron command text.
+  - Drift reports rank new failed units as critical and surface exposed ports, scheduler changes,
+    Docker changes, and configuration hash changes as structured findings.
+- Total tool inventory increased from 42 to **45 active MCP tools**.
+
+### Security
+- Snapshot IDs are path-traversal safe, data is stored with restricted file permissions where
+  supported, and the storage path can be configured with `VPS_GUARDIAN_SNAPSHOT_DIR`.
+
+---
+
 ## [0.11.0] - 2026-09-11
 
 ### Added

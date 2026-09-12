@@ -56,3 +56,4 @@ htmlcov/
 *.log
 /logs/
 /backups/
+/snapshots/

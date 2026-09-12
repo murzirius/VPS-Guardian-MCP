@@ -111,6 +111,11 @@ try:
         deploy_config_change as _deploy_config_change,
         plan_config_deployment as _plan_config_deployment,
     )
+    from src.snapshot import (
+        compare_system_snapshots as _compare_system_snapshots,
+        create_system_snapshot as _create_system_snapshot,
+        list_system_snapshots as _list_system_snapshots,
+    )
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -185,6 +190,11 @@ except ImportError:
     from deploy import (
         deploy_config_change as _deploy_config_change,
         plan_config_deployment as _plan_config_deployment,
+    )
+    from snapshot import (
+        compare_system_snapshots as _compare_system_snapshots,
+        create_system_snapshot as _create_system_snapshot,
+        list_system_snapshots as _list_system_snapshots,
     )
 
 # Initialize FastMCP Server
@@ -642,6 +652,51 @@ def deploy_config_change(
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in deploy_config_change: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def create_system_snapshot(
+    label: Optional[str] = None,
+    include_config_hashes: bool = True,
+) -> str:
+    """Save a privacy-preserving, read-only VPS state baseline.
+
+    Records ports, failed units, cron/timers, Docker inventory, and optional
+    configuration file hashes. It never stores config content or cron commands.
+    Snapshot storage is configurable with VPS_GUARDIAN_SNAPSHOT_DIR.
+    """
+    try:
+        data = _create_system_snapshot(label, include_config_hashes)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in create_system_snapshot: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def list_system_snapshots(limit: int = 20) -> str:
+    """List stored VPS state snapshots without exposing their collected content."""
+    try:
+        return json.dumps(_list_system_snapshots(limit), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in list_system_snapshots: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def compare_system_snapshots(baseline_id: str, current_id: str) -> str:
+    """Compare two snapshots and rank configuration or infrastructure drift by risk.
+
+    Flags new exposed ports, failed units, cron changes, Docker drift, and
+    configuration-hash changes. Both snapshots must be from the same host.
+    """
+    try:
+        return json.dumps(
+            _compare_system_snapshots(baseline_id, current_id), indent=2, ensure_ascii=False
+        )
+    except Exception as exc:
+        logger.error(f"Error in compare_system_snapshots: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
 
 
