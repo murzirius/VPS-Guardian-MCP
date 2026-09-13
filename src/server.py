@@ -116,6 +116,16 @@ try:
         create_system_snapshot as _create_system_snapshot,
         list_system_snapshots as _list_system_snapshots,
     )
+    from src.platform import (
+        get_firewall_status as _get_firewall_status,
+        get_package_updates as _get_package_updates,
+        get_platform_capabilities as _get_platform_capabilities,
+    )
+    from src.compose import (
+        compose_project_action as _compose_project_action,
+        inspect_compose_project as _inspect_compose_project,
+        list_compose_projects as _list_compose_projects,
+    )
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -195,6 +205,16 @@ except ImportError:
         compare_system_snapshots as _compare_system_snapshots,
         create_system_snapshot as _create_system_snapshot,
         list_system_snapshots as _list_system_snapshots,
+    )
+    from platform import (
+        get_firewall_status as _get_firewall_status,
+        get_package_updates as _get_package_updates,
+        get_platform_capabilities as _get_platform_capabilities,
+    )
+    from compose import (
+        compose_project_action as _compose_project_action,
+        inspect_compose_project as _inspect_compose_project,
+        list_compose_projects as _list_compose_projects,
     )
 
 # Initialize FastMCP Server
@@ -487,6 +507,41 @@ def clean_docker_garbage(
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
 
 
+@mcp.tool()
+def list_compose_projects(root_path: str = "/var/www", max_depth: int = 2) -> str:
+    """Discover conventional Docker Compose files in an authorized directory tree."""
+    try:
+        return json.dumps(_list_compose_projects(root_path, max_depth), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in list_compose_projects: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def inspect_compose_project(compose_file: str) -> str:
+    """Return Docker Compose service topology, images, ports, dependencies, and healthchecks."""
+    try:
+        return json.dumps(_inspect_compose_project(compose_file), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in inspect_compose_project: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def compose_project_action(
+    compose_file: str,
+    action: str,
+    services: Optional[list[str]] = None,
+    confirmation_token: Optional[str] = None,
+) -> str:
+    """Token-confirmed Docker Compose up, restart, or stop for selected project services."""
+    try:
+        return json.dumps(_compose_project_action(compose_file, action, services, confirmation_token), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in compose_project_action: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
 # ============================================================================
 # 3. Network & Firewall Tools
 # ============================================================================
@@ -521,6 +576,24 @@ def get_ufw_status() -> str:
     except Exception as exc:
         logger.error(f"Error in get_ufw_status: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def get_platform_capabilities() -> str:
+    """Detect package, firewall, service-manager, and Docker Compose backends on this host."""
+    return json.dumps(_get_platform_capabilities(), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_package_updates() -> str:
+    """List available updates via APT, DNF, YUM, Pacman, or Zypper without changing state."""
+    return json.dumps(_get_package_updates(), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_firewall_status() -> str:
+    """Return normalized UFW, firewalld, or nftables firewall state and rules."""
+    return json.dumps(_get_firewall_status(), indent=2, ensure_ascii=False)
 
 
 # ============================================================================

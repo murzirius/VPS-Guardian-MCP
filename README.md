@@ -7,7 +7,7 @@
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
 [![Release](https://img.shields.io/github/v/tag/murzirius/VPS-Guardian-MCP?color=blue&label=version)](https://github.com/murzirius/VPS-Guardian-MCP/tags)
 [![Stars](https://img.shields.io/github/stars/murzirius/VPS-Guardian-MCP?style=flat&color=yellow)](https://github.com/murzirius/VPS-Guardian-MCP/stargazers)
-[![Tools Count](https://img.shields.io/badge/Tools-45%20Active-brightgreen.svg)](#-tools-reference)
+[![Tools Count](https://img.shields.io/badge/Tools-51%20Active-brightgreen.svg)](#-tools-reference)
 [![Updates](https://img.shields.io/badge/Changelog-UPDATES.md-informational.svg)](UPDATES.md)
 
 A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, storage diagnostics, scheduled task inspection, OS patch auditing, kernel crash investigations, outbound network latency benchmarks, database health checks, and isolated emergency recovery.
@@ -20,13 +20,13 @@ It provides next-generation AI developer tools (Google Antigravity 2.0, Claude C
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.12.0` (See [UPDATES.md](UPDATES.md)) |
-| **Active MCP Tools** | **45 tools** |
+| **Version** | `0.13.0` (See [UPDATES.md](UPDATES.md)) |
+| **Active MCP Tools** | **51 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
-| **Release Status** | [v0.12.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
+| **Release Status** | [v0.13.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
-| **Supported Platforms** | Linux (Ubuntu, Debian, CentOS, AlmaLinux, Arch Linux) |
+| **Supported Platforms** | Linux with APT, DNF/YUM, Pacman, or Zypper; UFW, firewalld, or nftables; systemd, OpenRC, or SysVinit |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
 | **Compatible Modern Clients** | Google Antigravity 2.0, Claude Code, Cursor IDE, OpenAI Codex / ChatGPT, Windsurf |
 
@@ -124,6 +124,15 @@ It provides next-generation AI developer tools (Google Antigravity 2.0, Claude C
 - **`list_system_snapshots`**: Lists retained baseline metadata.
 - **`compare_system_snapshots`**: Prioritizes changes between two snapshots: failed units, new exposed ports, scheduled-task drift, Docker changes, and config hash changes.
 
+### 18. 🧩 Docker Compose Awareness (`src/compose.py`)
+- **`list_compose_projects`** and **`inspect_compose_project`**: Discover authorized Compose projects and expose safe topology (services, images, ports, dependencies, healthchecks) without environment values.
+- **`compose_project_action`**: Token-confirmed `up`, `restart`, or `stop` for a project or an explicit subset of services.
+
+### 19. 🌍 Cross-Distro Capability Adapters (`src/platform.py`)
+- **`get_platform_capabilities`**: Detects package manager, firewall, init system, and Compose availability.
+- **`get_package_updates`**: Read-only update inventory for APT, DNF/YUM, Pacman, and Zypper.
+- **`get_firewall_status`**: Normalized status for UFW, firewalld, or nftables; guarded service restart now supports systemd, OpenRC, and SysVinit.
+
 ---
 
 ## 🤖 Guidelines for AI Agents
@@ -135,9 +144,10 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 3. **Diagnose Mysterious Crashes Methodically**: When an application or container terminates without obvious error logs, always run `check_oom_events` and `check_kernel_errors` to identify memory exhaustion or segfaults before restarting.
 4. **Deploy Web Configurations Transactionally**: For supported Nginx configs and Caddyfiles, use `plan_config_deployment` first, then `deploy_config_change`; it validates, backs up, reloads, checks service health, and rolls back automatically on failure.
 5. **Establish and Review Baselines**: Create a snapshot after a known-good deployment, then compare it before remediation. Treat critical or warning drift as evidence to investigate, not authorization to change a host.
-6. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
-7. **Promptly Surface Critical Alerts**: When `check_system_updates` or `vps://system-overview` flags pending security patches or reboot requirements, prioritize alerting the operator and proposing remediation.
-8. **Use Server-Issued Confirmation Tokens**: In `controlled` mode, call a state-changing tool once without a token, show its impact plan to the operator, then repeat the exact call with the returned `confirmation_token`.
+6. **Inspect Compose Before Acting**: Inspect a Compose project and limit `compose_project_action` to only the services that need intervention.
+7. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
+8. **Promptly Surface Critical Alerts**: When `check_system_updates` or `vps://system-overview` flags pending security patches or reboot requirements, prioritize alerting the operator and proposing remediation.
+9. **Use Server-Issued Confirmation Tokens**: In `controlled` mode, call a state-changing tool once without a token, show its impact plan to the operator, then repeat the exact call with the returned `confirmation_token`.
 
 ---
 
@@ -146,12 +156,14 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.12.0)
-│   ├── server.py            # FastMCP server, resources, prompts, and tool registry (45 tools)
+│   ├── __init__.py          # Package version (v0.13.0)
+│   ├── server.py            # FastMCP server, resources, prompts, and tool registry (51 tools)
 │   ├── safety.py            # Confirmation tokens, execution modes, and audit log
 │   ├── incident.py          # Unified severity-ranked incident report
 │   ├── deploy.py            # Validated config deployment, reload health check, and rollback
 │   ├── snapshot.py          # Privacy-preserving state baseline and drift comparison
+│   ├── compose.py           # Guarded Compose project discovery and lifecycle actions
+│   ├── platform.py          # Cross-distro package, firewall, and service capability adapters
 │   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
 │   ├── docker_manager.py    # Container inventory, logs, and live telemetry
 │   ├── network.py           # Listening ports, bound processes, and UFW rules
@@ -360,7 +372,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ---
 
-## 🛠️ Tools Reference (45 Active Tools)
+## 🛠️ Tools Reference (51 Active Tools)
 
 | Tool Name | Parameters | Description |
 | :--- | :--- | :--- |
@@ -378,8 +390,14 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `docker_container_action` | `container_name`, `action`, `timeout`, `confirmation_token` (*optional*) | Token-confirmed container lifecycle operation |
 | `inspect_docker_container` | `container_name` (*string*) | Deep container introspection (network, ports, mounts, restart policy, masked env vars) |
 | `clean_docker_garbage` | `prune_type`, `confirmation_token` (*optional*) | Token-confirmed pruning of unused Docker resources |
+| `list_compose_projects` | `root_path`, `max_depth` | Finds authorized conventional Compose project files |
+| `inspect_compose_project` | `compose_file` | Shows safe Compose topology without environment values |
+| `compose_project_action` | `compose_file`, `action`, `services`, `confirmation_token` (*optional*) | Token-confirmed Compose `up`, `restart`, or `stop` |
 | `get_open_ports` | *none* | Discovers all listening ports (TCP/UDP, IPv4/IPv6) with process names and PIDs |
 | `get_ufw_status` | *none* | Audits UFW firewall state, default traffic policies, and active rules |
+| `get_platform_capabilities` | *none* | Detects cross-distro management backends |
+| `get_package_updates` | *none* | Lists updates via the detected package manager |
+| `get_firewall_status` | *none* | Normalized UFW, firewalld, or nftables status |
 | `view_file_content` | `file_path` (*string*), `max_bytes` (*int*) | Reads authorized configuration files with size bounding |
 | `write_file_content` | `file_path`, `content`, `backup`, `confirmation_token` (*optional*) | Token-confirmed atomic config update with backup |
 | `list_directory` | `dir_path` (*string*), `max_depth` (*int*) | Lists directory contents within authorized paths |

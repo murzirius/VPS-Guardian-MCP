@@ -29,8 +29,10 @@ logger = logging.getLogger("vps_guardian.recover")
 
 try:
     from src.safety import record_audit_event, request_authorization
+    from src.platform import build_service_command
 except ImportError:
     from safety import record_audit_event, request_authorization
+    from platform import build_service_command
 
 # Whitelist of permitted recovery actions
 ALLOWED_RECOVERY_ACTIONS = {
@@ -276,7 +278,7 @@ def run_recovery_action(
 
 
 def _action_restart_service(service_name: Optional[str]) -> Dict[str, Any]:
-    """Safely restart a specific system service using systemctl."""
+    """Safely restart a specific system service through the detected init system."""
     if not service_name or not isinstance(service_name, str):
         return {
             "status": "error",
@@ -292,16 +294,13 @@ def _action_restart_service(service_name: Optional[str]) -> Dict[str, Any]:
             "error": f"Invalid service name '{clean_name}'. Only alphanumeric characters, dots, and hyphens allowed.",
         }
 
-    systemctl_bin = shutil.which("systemctl")
-    if not systemctl_bin:
+    manager, cmd, target_name = build_service_command("restart", clean_name)
+    if not manager or not cmd:
         return {
             "status": "unavailable",
             "success": False,
-            "error": "systemctl command not found. Host is not systemd-based.",
+            "error": "No supported service manager found (systemd, OpenRC, or SysVinit).",
         }
-
-    unit_name = clean_name if clean_name.endswith(".service") else f"{clean_name}.service"
-    cmd = [systemctl_bin, "restart", unit_name]
 
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
@@ -310,21 +309,23 @@ def _action_restart_service(service_name: Optional[str]) -> Dict[str, Any]:
                 "status": "ok",
                 "success": True,
                 "action": "restart_service",
-                "target": unit_name,
-                "message": f"Service '{unit_name}' successfully restarted.",
+                "target": target_name,
+                "service_manager": manager,
+                "message": f"Service '{target_name}' successfully restarted via {manager}.",
             }
         else:
             err_msg = res.stderr.strip() or res.stdout.strip()
             if "permission denied" in err_msg.lower() or "interactive authentication" in err_msg.lower():
                 err_msg = (
-                    f"Permission denied restarting '{unit_name}'. Superuser privileges are required. "
-                    "Grant sudo permissions for systemctl restart in /etc/sudoers.d/."
+                    f"Permission denied restarting '{target_name}'. Superuser privileges are required. "
+                    "Grant the VPS-Guardian service user permission to restart this service."
                 )
             return {
                 "status": "error",
                 "success": False,
                 "action": "restart_service",
-                "target": unit_name,
+                "target": target_name,
+                "service_manager": manager,
                 "error": err_msg,
             }
     except subprocess.TimeoutExpired:
@@ -332,15 +333,17 @@ def _action_restart_service(service_name: Optional[str]) -> Dict[str, Any]:
             "status": "error",
             "success": False,
             "action": "restart_service",
-            "target": unit_name,
-            "error": f"Timeout while restarting service '{unit_name}'.",
+            "target": target_name,
+            "service_manager": manager,
+            "error": f"Timeout while restarting service '{target_name}'.",
         }
     except Exception as exc:
         return {
             "status": "error",
             "success": False,
             "action": "restart_service",
-            "target": unit_name,
+            "target": target_name,
+            "service_manager": manager,
             "error": f"Unexpected error restarting service: {str(exc)}",
         }
 

@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.13.0] - 2026-09-13
+
+### Added
+- **Docker Compose Awareness (`src/compose.py`)**:
+  - Added guarded Compose project discovery, topology inspection, and token-confirmed `up`,
+    `restart`, and `stop` actions for explicitly selected services.
+  - Compose inspection intentionally excludes environment values and uses only whitelisted paths.
+- **Cross-Distro Capability Adapters (`src/platform.py`)**:
+  - Added platform detection for APT, DNF/YUM, Pacman, Zypper; UFW, firewalld, nftables; and
+    systemd, OpenRC, SysVinit.
+  - Added normalized firewall status and package-update inventory tools.
+  - Guarded `restart_service` now uses the detected service manager rather than systemd only.
+- Total tool inventory increased from 45 to **51 active MCP tools**.
+
+### Security
+- Compose lifecycle changes are protected by exact-parameter, single-use confirmation tokens and
+  redacted audit events, just like existing state-changing tools.
+
+---
+
 ## [0.12.0] - 2026-09-12
 
 ### Added
