@@ -68,7 +68,7 @@ The local `npx` runner keeps MCP's stdio transport clean and opens SSH to the bi
       "command": "npx",
       "args": [
         "-y",
-        "github:murzirius/VPS-Guardian-MCP#v0.14.1",
+        "github:murzirius/VPS-Guardian-MCP#v0.15.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -97,7 +97,7 @@ Arguments, one per row:
 
 ```text
 -y
-github:murzirius/VPS-Guardian-MCP#v0.14.1
+github:murzirius/VPS-Guardian-MCP#v0.15.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -119,7 +119,7 @@ Use the JSON from step 3 in that client's MCP server configuration. Keep the arg
 #### Claude Code
 
 ```bash
-claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.14.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
+claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.15.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
 ```
 
 #### The SSH user is not `root`
@@ -210,11 +210,11 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.14.1` (See [UPDATES.md](UPDATES.md)) |
+| **Version** | `0.15.0` (See [UPDATES.md](UPDATES.md)) |
 | **Active MCP Tools** | **60 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
-| **Release Status** | [v0.14.1 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
+| **Release Status** | [v0.15.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux with APT, DNF/YUM, Pacman, or Zypper; UFW, firewalld, or nftables; systemd, OpenRC, or SysVinit |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -254,6 +254,9 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 
 ### 5. 🌍 Web Server & SSL Diagnostics (`src/web.py`)
 - **`test_nginx_config`**: Validates Nginx syntax non-disruptively (`nginx -t`) before reloading configuration files.
+- **`check_http_endpoint`**: Checks a public URL's response code, TLS, redirects, latency, and optionally a required text fragment without returning page contents.
+- **`check_http_endpoints`**: Checks up to 20 public endpoints in one compact deployment-health report.
+- **`get_web_deployment_status`**: Correlates a public HTTPS response with its local Nginx virtual host and matching TLS certificate.
 - **`check_ssl_certificates`**: Scans Certbot and Let's Encrypt certificates, verifying domain bindings and alerting if renewal is required (<14 days).
 - **`list_virtual_hosts`**: Parses virtual host declarations from `/etc/nginx/sites-enabled/` and `conf.d/` (server names, listening ports, SSL, and reverse proxy targets).
 
@@ -356,7 +359,7 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.14.1)
+│   ├── __init__.py          # Package version (v0.15.0)
 │   ├── server.py            # FastMCP server, resources, prompts, and tool registry (51 tools)
 │   ├── safety.py            # Confirmation tokens, execution modes, and audit log
 │   ├── incident.py          # Unified severity-ranked incident report
@@ -493,7 +496,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ---
 
-## 🛠️ Tools Reference (60 Active Tools)
+## 🛠️ Tools Reference (63 Active Tools)
 
 | Tool Name | Parameters | Description |
 | :--- | :--- | :--- |
@@ -537,6 +540,9 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `list_system_snapshots` | `limit` (*int*) | Lists stored baseline metadata |
 | `compare_system_snapshots` | `baseline_id`, `current_id` | Prioritizes infrastructure drift between two snapshots |
 | `test_nginx_config` | *none* | Validates Nginx configuration syntax (`nginx -t`) non-disruptively |
+| `check_http_endpoint` | `url`, `expected_status`, `expected_text`, `timeout_seconds` | Checks one public endpoint's status, TLS, redirects, latency, and optional text |
+| `check_http_endpoints` | `endpoints` | Checks up to 20 public endpoints in one deployment-health report |
+| `get_web_deployment_status` | `domain`, `path`, `expected_status`, `expected_text` | Correlates public HTTPS, local Nginx vhost, and matching TLS certificate |
 | `check_ssl_certificates` | *none* | Audits SSL/TLS certificates and alerts on expirations within 14 days |
 | `list_virtual_hosts` | *none* | Inspects active Nginx virtual hosts, listening ports, SSL, and proxies |
 | `check_failed_logins` | `limit` (*int*, default: *20*) | Surfaces recent failed SSH logins and top offending attacker IPs |

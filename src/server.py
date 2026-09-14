@@ -68,7 +68,10 @@ try:
         get_ufw_status as _get_ufw_status,
     )
     from src.web import (
+        check_http_endpoint as _check_http_endpoint,
+        check_http_endpoints as _check_http_endpoints,
         check_ssl_certificates as _check_ssl_certificates,
+        get_web_deployment_status as _get_web_deployment_status,
         list_virtual_hosts as _list_virtual_hosts,
         test_nginx_config as _test_nginx_config,
     )
@@ -169,7 +172,10 @@ except ImportError:
         get_ufw_status as _get_ufw_status,
     )
     from web import (
+        check_http_endpoint as _check_http_endpoint,
+        check_http_endpoints as _check_http_endpoints,
         check_ssl_certificates as _check_ssl_certificates,
+        get_web_deployment_status as _get_web_deployment_status,
         list_virtual_hosts as _list_virtual_hosts,
         test_nginx_config as _test_nginx_config,
     )
@@ -929,6 +935,61 @@ def test_nginx_config() -> str:
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in test_nginx_config: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def check_http_endpoint(
+    url: str,
+    expected_status: int = 200,
+    expected_text: Optional[str] = None,
+    timeout_seconds: int = 10,
+) -> str:
+    """Check a public HTTP(S) URL: response status, redirects, TLS, latency, and optional text.
+
+    This is read-only and intentionally returns only metadata, never a page body.
+    Use it before or after a deployment to verify the public result.
+    """
+    try:
+        data = _check_http_endpoint(url, expected_status, expected_text, timeout_seconds)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in check_http_endpoint: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def check_http_endpoints(endpoints: list[dict]) -> str:
+    """Check up to 20 public HTTP(S) endpoints in one compact deployment health report.
+
+    Each item accepts url, expected_status (default 200), expected_text (optional),
+    and timeout_seconds (default 10). This tool is read-only.
+    """
+    try:
+        data = _check_http_endpoints(endpoints)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in check_http_endpoints: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def get_web_deployment_status(
+    domain: str,
+    path: str = "/",
+    expected_status: int = 200,
+    expected_text: Optional[str] = None,
+) -> str:
+    """Verify one website end to end: public HTTPS response, local Nginx host, and certificate.
+
+    Returns a single diagnosis identifying whether an issue is public availability,
+    virtual-host configuration, or the matching TLS certificate.
+    """
+    try:
+        data = _get_web_deployment_status(domain, path, expected_status, expected_text)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in get_web_deployment_status: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
 
 

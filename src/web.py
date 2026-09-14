@@ -14,9 +14,176 @@ import os
 import re
 import shutil
 import subprocess
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("vps_guardian.web")
+
+MAX_HTTP_TIMEOUT_SECONDS = 30
+MAX_RESPONSE_BYTES = 256 * 1024
+
+
+def check_http_endpoint(
+    url: str,
+    expected_status: int = 200,
+    expected_text: Optional[str] = None,
+    timeout_seconds: int = 10,
+) -> Dict[str, Any]:
+    """Check a public HTTP(S) endpoint and return a compact deployment-ready result.
+
+    Follows normal redirects, verifies TLS certificates, caps the response read size,
+    and never exposes response bodies.  ``expected_text`` is only used as a
+    presence check, making it useful for detecting a wrong virtual host or stale page.
+    """
+    if not isinstance(url, str) or len(url) > 2048:
+        return {"status": "error", "error": "url must be a non-empty URL up to 2048 characters."}
+    parsed = urllib.parse.urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return {"status": "error", "error": "Only absolute http:// or https:// URLs are supported."}
+    if not isinstance(expected_status, int) or not 100 <= expected_status <= 599:
+        return {"status": "error", "error": "expected_status must be an HTTP status from 100 to 599."}
+    if expected_text is not None and (not isinstance(expected_text, str) or len(expected_text) > 512):
+        return {"status": "error", "error": "expected_text must be a string up to 512 characters."}
+    if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= MAX_HTTP_TIMEOUT_SECONDS:
+        return {"status": "error", "error": f"timeout_seconds must be between 1 and {MAX_HTTP_TIMEOUT_SECONDS}."}
+
+    request = urllib.request.Request(
+        parsed.geturl(),
+        headers={"User-Agent": "VPS-Guardian-MCP/0.15 endpoint-check"},
+        method="GET",
+    )
+    started = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            elapsed_ms = round((time.monotonic() - started) * 1000, 1)
+            truncated = len(body) > MAX_RESPONSE_BYTES
+            body = body[:MAX_RESPONSE_BYTES]
+            charset = response.headers.get_content_charset() or "utf-8"
+            text = body.decode(charset, errors="replace") if expected_text is not None else ""
+            actual_status = response.getcode()
+            text_found = expected_text in text if expected_text is not None else None
+            checks_passed = actual_status == expected_status and (text_found is not False)
+            return {
+                "status": "ok" if checks_passed else "warning",
+                "url": parsed.geturl(),
+                "final_url": response.geturl(),
+                "http_status": actual_status,
+                "expected_status": expected_status,
+                "latency_ms": elapsed_ms,
+                "content_type": response.headers.get("Content-Type"),
+                "redirected": response.geturl() != parsed.geturl(),
+                "expected_text_checked": expected_text is not None,
+                "expected_text_found": text_found,
+                "response_truncated": truncated,
+                "healthy": checks_passed,
+            }
+    except urllib.error.HTTPError as exc:
+        elapsed_ms = round((time.monotonic() - started) * 1000, 1)
+        return {
+            "status": "warning",
+            "url": parsed.geturl(),
+            "final_url": exc.geturl(),
+            "http_status": exc.code,
+            "expected_status": expected_status,
+            "latency_ms": elapsed_ms,
+            "healthy": False,
+            "error": f"Endpoint returned HTTP {exc.code}.",
+        }
+    except Exception as exc:
+        elapsed_ms = round((time.monotonic() - started) * 1000, 1)
+        return {
+            "status": "error",
+            "url": parsed.geturl(),
+            "latency_ms": elapsed_ms,
+            "healthy": False,
+            "error": f"Endpoint request failed: {str(exc)}",
+        }
+
+
+def get_web_deployment_status(
+    domain: str,
+    path: str = "/",
+    expected_status: int = 200,
+    expected_text: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Correlate a public HTTPS response with local Nginx and certificate state."""
+    clean_domain = domain.strip().lower() if isinstance(domain, str) else ""
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", clean_domain):
+        return {"status": "error", "error": "domain must be a valid hostname."}
+    if not isinstance(path, str) or not path.startswith("/") or len(path) > 1024:
+        return {"status": "error", "error": "path must start with '/' and be at most 1024 characters."}
+
+    endpoint = check_http_endpoint(
+        f"https://{clean_domain}{path}", expected_status, expected_text
+    )
+    vhosts = list_virtual_hosts()
+    matching_vhosts = [
+        host for host in vhosts.get("virtual_hosts", [])
+        if clean_domain in [item.lower() for item in host.get("domains", [])]
+    ]
+    certificates = check_ssl_certificates()
+    matching_certificates = [
+        certificate for certificate in certificates.get("certificates", [])
+        if clean_domain in [item.lower() for item in certificate.get("domains", [])]
+    ]
+    config_ok = bool(matching_vhosts)
+    cert_ok = bool(matching_certificates) and not any(
+        item.get("is_expiring_soon") for item in matching_certificates
+    )
+    healthy = endpoint.get("healthy") is True and config_ok and cert_ok
+    issues: List[str] = []
+    if not endpoint.get("healthy"):
+        issues.append("The public endpoint did not meet the expected response check.")
+    if not config_ok:
+        issues.append("No matching Nginx virtual host was found locally.")
+    if not matching_certificates:
+        issues.append("No local certificate matching this domain was found.")
+    elif not cert_ok:
+        issues.append("A matching certificate expires soon.")
+    return {
+        "status": "ok" if healthy else "warning",
+        "domain": clean_domain,
+        "path": path,
+        "healthy": healthy,
+        "endpoint": endpoint,
+        "matching_virtual_hosts": matching_vhosts,
+        "matching_certificates": matching_certificates,
+        "issues": issues,
+    }
+
+
+def check_http_endpoints(endpoints: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Check up to 20 endpoint definitions and summarize deployment health."""
+    if not isinstance(endpoints, list) or not endpoints:
+        return {"status": "error", "error": "endpoints must be a non-empty list."}
+    if len(endpoints) > 20:
+        return {"status": "error", "error": "At most 20 endpoints can be checked at once."}
+    results: List[Dict[str, Any]] = []
+    for index, endpoint in enumerate(endpoints, start=1):
+        if not isinstance(endpoint, dict):
+            results.append({"index": index, "status": "error", "healthy": False, "error": "Endpoint must be an object."})
+            continue
+        result = check_http_endpoint(
+            endpoint.get("url"),
+            endpoint.get("expected_status", 200),
+            endpoint.get("expected_text"),
+            endpoint.get("timeout_seconds", 10),
+        )
+        result["index"] = index
+        results.append(result)
+    healthy_count = sum(1 for result in results if result.get("healthy") is True)
+    return {
+        "status": "ok" if healthy_count == len(results) else "warning",
+        "total_endpoints": len(results),
+        "healthy_endpoints": healthy_count,
+        "unhealthy_endpoints": len(results) - healthy_count,
+        "healthy": healthy_count == len(results),
+        "results": results,
+    }
 
 
 def test_nginx_config() -> Dict[str, Any]:

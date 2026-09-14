@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.15.0] - 2026-09-14
+
+### Added
+- **Web & Deployment Guard (`src/web.py`)**:
+  - Added `check_http_endpoint` for bounded public HTTP(S) checks: expected status, redirect,
+    certificate verification, latency, and an optional required text fragment.
+  - Added `check_http_endpoints` to assess up to 20 endpoints in one compact report.
+  - Added `get_web_deployment_status`, which correlates public HTTPS availability with the
+    matching local Nginx virtual host and TLS certificate.
+
+### Safety
+- Endpoint checks are read-only, only accept absolute HTTP(S) URLs, cap response reads at 256 KiB,
+  validate timeouts and expected status codes, and never return page bodies.
+
+---
+
 ## [0.14.1] - 2026-09-14
 
 ### Added
