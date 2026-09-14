@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.14.0] - 2026-09-14
+
+### Added
+- **Agent Workload Topology (`src/topology.py`)**:
+  - Added `get_vps_topology` to build a read-only, bounded map across reverse proxies,
+    websites, Compose projects, containers, ports, and detected databases.
+  - Added `find_workload`, `get_workload_health`, and `diagnose_workload` so an AI agent can
+    locate an application from a domain, service, container, port, image, or path fragment
+    before inspecting its focused health, logs, OOM events, or kernel evidence.
+  - Added `get_change_impact` and `prepare_repair_plan`. Both are diagnostic only: they expose
+    scope and suggested guarded tools without executing a mutation or issuing authorization.
+  - Added `create_workload_baseline` and `compare_workload_baseline` for secret-free,
+    workload-specific known-good state comparisons.
+- Added server-level MCP instructions that guide agents through discovery, diagnosis, planning,
+  and the existing confirmation-token safety boundary.
+- Total tool inventory increased from 51 to **59 active MCP tools**.
+
+### Security
+- Topology output and workload baselines exclude configuration contents, environment values,
+  credentials, and diagnostic log output. Baseline IDs are validated before file access.
+
+---
+
 ## [0.13.0] - 2026-09-13
 
 ### Added

@@ -68,7 +68,7 @@ The local `npx` runner keeps MCP's stdio transport clean and opens SSH to the bi
       "command": "npx",
       "args": [
         "-y",
-        "github:murzirius/VPS-Guardian-MCP#v0.13.0",
+        "github:murzirius/VPS-Guardian-MCP#v0.14.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -97,7 +97,7 @@ Arguments, one per row:
 
 ```text
 -y
-github:murzirius/VPS-Guardian-MCP#v0.13.0
+github:murzirius/VPS-Guardian-MCP#v0.14.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -119,7 +119,7 @@ Use the JSON from step 3 in that client's MCP server configuration. Keep the arg
 #### Claude Code
 
 ```bash
-claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.13.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
+claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.14.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
 ```
 
 #### The SSH user is not `root`
@@ -200,7 +200,7 @@ Update **both ends** to the same release:
    .venv/bin/pip install -e .
    ```
 
-2. In the client MCP configuration, replace `#v0.13.0` with `#vX.Y.Z`, save, and restart the client. If you pinned a release, do not use `#main` unless you intentionally want unreleased changes.
+2. In the client MCP configuration, replace `#v0.14.0` with `#vX.Y.Z`, save, and restart the client. If you pinned a release, do not use `#main` unless you intentionally want unreleased changes.
 
 The running agent process is recreated when the MCP client reconnects, so no separate daemon restart is needed for the default SSH setup.
 
@@ -210,11 +210,11 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.13.0` (See [UPDATES.md](UPDATES.md)) |
-| **Active MCP Tools** | **51 tools** |
+| **Version** | `0.14.0` (See [UPDATES.md](UPDATES.md)) |
+| **Active MCP Tools** | **59 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
-| **Release Status** | [v0.13.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
+| **Release Status** | [v0.14.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux with APT, DNF/YUM, Pacman, or Zypper; UFW, firewalld, or nftables; systemd, OpenRC, or SysVinit |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -323,6 +323,13 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 - **`get_package_updates`**: Read-only update inventory for APT, DNF/YUM, Pacman, and Zypper.
 - **`get_firewall_status`**: Normalized status for UFW, firewalld, or nftables; guarded service restart now supports systemd, OpenRC, and SysVinit.
 
+### 20. 🧭 Agent Workload Topology (`src/topology.py`)
+- **`get_vps_topology`**: Builds a bounded map of websites, reverse proxies, Compose projects, containers, listening ports, and databases. It excludes configuration contents, environment values, and credentials.
+- **`find_workload`** and **`get_workload_health`**: Find an application by domain, container, service, port, or path fragment, then show its component health, matching SSL state, and host pressure.
+- **`diagnose_workload`** and **`prepare_repair_plan`**: Gather focused, bounded evidence and create a non-executing repair plan using the existing guarded actions.
+- **`get_change_impact`**: Shows affected components before a proposed restart, stop, configuration deployment, or update; it never performs that action.
+- **`create_workload_baseline`** and **`compare_workload_baseline`**: Save and compare secret-free known-good state for a single workload.
+
 ---
 
 ## 🤖 Guidelines for AI Agents
@@ -335,9 +342,11 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 4. **Deploy Web Configurations Transactionally**: For supported Nginx configs and Caddyfiles, use `plan_config_deployment` first, then `deploy_config_change`; it validates, backs up, reloads, checks service health, and rolls back automatically on failure.
 5. **Establish and Review Baselines**: Create a snapshot after a known-good deployment, then compare it before remediation. Treat critical or warning drift as evidence to investigate, not authorization to change a host.
 6. **Inspect Compose Before Acting**: Inspect a Compose project and limit `compose_project_action` to only the services that need intervention.
-7. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
-8. **Promptly Surface Critical Alerts**: When `check_system_updates` or `vps://system-overview` flags pending security patches or reboot requirements, prioritize alerting the operator and proposing remediation.
-9. **Use Server-Issued Confirmation Tokens**: In `controlled` mode, call a state-changing tool once without a token, show its impact plan to the operator, then repeat the exact call with the returned `confirmation_token`.
+7. **Find Before Diagnosing**: For an application request, start with `get_vps_topology` or `find_workload`, then use `get_workload_health` and `diagnose_workload` rather than guessing its container or service name.
+8. **Plan Before Repairing**: Use `get_change_impact` and `prepare_repair_plan` as evidence. Neither authorizes a change or bypasses the server-side safety gate.
+9. **Handle Errors Structurally**: Diagnostic outputs and system exceptions are returned as structured JSON payloads. Check the `status` field (`"ok"`, `"error"`, `"unavailable"`, `"forbidden"`) to decide subsequent actions.
+10. **Promptly Surface Critical Alerts**: When `check_system_updates` or `vps://system-overview` flags pending security patches or reboot requirements, prioritize alerting the operator and proposing remediation.
+11. **Use Server-Issued Confirmation Tokens**: In `controlled` mode, call a state-changing tool once without a token, show its impact plan to the operator, then repeat the exact call with the returned `confirmation_token`.
 
 ---
 
@@ -346,7 +355,7 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.13.0)
+│   ├── __init__.py          # Package version (v0.14.0)
 │   ├── server.py            # FastMCP server, resources, prompts, and tool registry (51 tools)
 │   ├── safety.py            # Confirmation tokens, execution modes, and audit log
 │   ├── incident.py          # Unified severity-ranked incident report
@@ -354,6 +363,7 @@ VPS-Guardian-MCP/
 │   ├── snapshot.py          # Privacy-preserving state baseline and drift comparison
 │   ├── compose.py           # Guarded Compose project discovery and lifecycle actions
 │   ├── platform.py          # Cross-distro package, firewall, and service capability adapters
+│   ├── topology.py          # Workload discovery, diagnosis, impact, and baselines
 │   ├── monitor.py           # CPU, RAM, Disk I/O, Network, Services, Logs
 │   ├── docker_manager.py    # Container inventory, logs, and live telemetry
 │   ├── network.py           # Listening ports, bound processes, and UFW rules
@@ -482,7 +492,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ---
 
-## 🛠️ Tools Reference (51 Active Tools)
+## 🛠️ Tools Reference (59 Active Tools)
 
 | Tool Name | Parameters | Description |
 | :--- | :--- | :--- |
@@ -503,6 +513,14 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `list_compose_projects` | `root_path`, `max_depth` | Finds authorized conventional Compose project files |
 | `inspect_compose_project` | `compose_file` | Shows safe Compose topology without environment values |
 | `compose_project_action` | `compose_file`, `action`, `services`, `confirmation_token` (*optional*) | Token-confirmed Compose `up`, `restart`, or `stop` |
+| `get_vps_topology` | *none* | Safe map of websites, proxies, Compose, containers, ports, and databases |
+| `find_workload` | `query` (*string*) | Finds workloads by domain, component name, port, image, or path fragment |
+| `get_workload_health` | `target` (*string*) | Workload status, matching SSL metadata, container stats, and host pressure |
+| `diagnose_workload` | `target`, `log_lines` (*int*) | Focused, bounded logs plus OOM, kernel, and health evidence |
+| `get_change_impact` | `target`, `action` | Read-only affected-component report before a prospective change |
+| `prepare_repair_plan` | `target` (*string*) | Evidence-backed repair plan; never executes a mutation |
+| `create_workload_baseline` | `target`, `label` (*optional*) | Persists a secret-free known-good workload state |
+| `compare_workload_baseline` | `baseline_id` (*string*) | Compares one workload baseline with current discovered state |
 | `get_open_ports` | *none* | Discovers all listening ports (TCP/UDP, IPv4/IPv6) with process names and PIDs |
 | `get_ufw_status` | *none* | Audits UFW firewall state, default traffic policies, and active rules |
 | `get_platform_capabilities` | *none* | Detects cross-distro management backends |

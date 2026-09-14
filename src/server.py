@@ -126,6 +126,16 @@ try:
         inspect_compose_project as _inspect_compose_project,
         list_compose_projects as _list_compose_projects,
     )
+    from src.topology import (
+        compare_workload_baseline as _compare_workload_baseline,
+        create_workload_baseline as _create_workload_baseline,
+        diagnose_workload as _diagnose_workload,
+        find_workload as _find_workload,
+        get_change_impact as _get_change_impact,
+        get_vps_topology as _get_vps_topology,
+        get_workload_health as _get_workload_health,
+        prepare_repair_plan as _prepare_repair_plan,
+    )
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -216,11 +226,28 @@ except ImportError:
         inspect_compose_project as _inspect_compose_project,
         list_compose_projects as _list_compose_projects,
     )
+    from topology import (
+        compare_workload_baseline as _compare_workload_baseline,
+        create_workload_baseline as _create_workload_baseline,
+        diagnose_workload as _diagnose_workload,
+        find_workload as _find_workload,
+        get_change_impact as _get_change_impact,
+        get_vps_topology as _get_vps_topology,
+        get_workload_health as _get_workload_health,
+        prepare_repair_plan as _prepare_repair_plan,
+    )
 
 # Initialize FastMCP Server
 mcp = FastMCP(
     name="VPS-Guardian-MCP",
     dependencies=["psutil", "docker"],
+    instructions=(
+        "Use VPS-Guardian-MCP tools instead of asking the operator to run shell commands. "
+        "For an application problem, begin with get_vps_topology or find_workload, then use "
+        "get_workload_health and diagnose_workload. Treat diagnostics and change-impact reports as "
+        "evidence, not authorization: use the existing controlled-mode confirmation flow for every "
+        "state-changing action. Never expose credentials, configuration content, or confirmation tokens."
+    ),
 )
 
 
@@ -539,6 +566,98 @@ def compose_project_action(
         return json.dumps(_compose_project_action(compose_file, action, services, confirmation_token), indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in compose_project_action: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 2.5 Agent Workload Topology Tools
+# ============================================================================
+
+@mcp.tool()
+def get_vps_topology() -> str:
+    """Map websites, reverse proxies, Compose projects, containers, ports, and databases.
+
+    The map is read-only and excludes configuration content, environment values,
+    and credentials. Use it before diagnosing an application whose location on
+    the VPS is unknown.
+    """
+    try:
+        return json.dumps(_get_vps_topology(), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in get_vps_topology: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def find_workload(query: str) -> str:
+    """Find an application by domain, container, Compose service, port, or path fragment."""
+    try:
+        return json.dumps(_find_workload(query), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in find_workload: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def get_workload_health(target: str) -> str:
+    """Return concise health, resource, container, and matching SSL state for one workload."""
+    try:
+        return json.dumps(_get_workload_health(target), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in get_workload_health: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def diagnose_workload(target: str, log_lines: int = 100) -> str:
+    """Gather bounded read-only logs, OOM, kernel, and health evidence for a workload."""
+    try:
+        return json.dumps(_diagnose_workload(target, log_lines), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in diagnose_workload: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def get_change_impact(target: str, action: str = "inspect") -> str:
+    """Show what a prospective restart, stop, config deployment, or update may affect.
+
+    This tool never executes the action and does not issue a confirmation token.
+    """
+    try:
+        return json.dumps(_get_change_impact(target, action), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in get_change_impact: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def prepare_repair_plan(target: str) -> str:
+    """Create an evidence-backed repair plan without changing the VPS."""
+    try:
+        return json.dumps(_prepare_repair_plan(target), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in prepare_repair_plan: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def create_workload_baseline(target: str, label: Optional[str] = None) -> str:
+    """Save a secret-free known-good workload baseline for later drift comparison."""
+    try:
+        return json.dumps(_create_workload_baseline(target, label), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in create_workload_baseline: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def compare_workload_baseline(baseline_id: str) -> str:
+    """Compare a saved workload baseline with the current workload state."""
+    try:
+        return json.dumps(_compare_workload_baseline(baseline_id), indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in compare_workload_baseline: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
 
 
