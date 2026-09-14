@@ -12,7 +12,197 @@
 
 A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, storage diagnostics, scheduled task inspection, OS patch auditing, kernel crash investigations, outbound network latency benchmarks, database health checks, and isolated emergency recovery.
 
-It provides next-generation AI developer tools (Google Antigravity 2.0, Claude Code, Cursor, OpenAI Codex, Windsurf) with structured, programmatic capabilities to inspect server health and resolve infrastructure issues without raw shell access or unconstrained root privileges.
+It gives AI agents (Google Antigravity 2.0, Claude Code, Cursor, OpenAI Codex, and Windsurf) **named, structured VPS capabilities** instead of an unrestricted “run this shell command and paste the output” workflow. The agent calls tools such as `get_system_health`, `inspect_compose_project`, or `plan_config_deployment`; the server validates inputs, limits writable paths, and enforces confirmations for changes.
+
+---
+
+## 🚀 Connect an AI Agent to Your VPS
+
+Use this section first. It covers the normal setup, the Codex Desktop form, alternative SSH arrangements, verification, and upgrades. The detailed tool catalogue is further down.
+
+### What you need
+
+- A Linux VPS reachable via SSH.
+- An SSH key that can log in to the VPS. Password-based SSH is intentionally not supported by the `npx` runner.
+- Node.js 16+ on the computer running the AI client; Python 3.10+ on the VPS.
+- A trusted VPS: the runner accepts its SSH host key on first connection. Verify the server fingerprint by another channel when that matters for your environment.
+
+### 1. Install the MCP server on the VPS
+
+Run once on the VPS. `/opt/vps-guardian-mcp` is the default path used by the client examples.
+
+```bash
+git clone https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+cd /opt/vps-guardian-mcp
+python3 -m venv .venv
+.venv/bin/pip install -e .
+```
+
+If the MCP process will not run as `root`, grant only the capabilities it needs:
+
+```bash
+sudo usermod -aG docker <MCP_USER>
+sudo usermod -aG systemd-journal <MCP_USER>
+```
+
+Log out and back in after changing group membership. The server still degrades safely when Docker or journal permissions are unavailable.
+
+### 2. Choose a safety mode
+
+| Situation | Mode | Result |
+| :--- | :--- | :--- |
+| The agent should only inspect and diagnose a VPS | `read-only` | Default. Any write, restart, cleanup, backup, or update is blocked. |
+| The agent may administer the VPS, but you must approve every change | `controlled` | Recommended. The first mutation returns an exact, single-use confirmation token valid for 5 minutes. |
+| A tightly isolated, separately protected automation environment | `unrestricted` | Changes run immediately. Avoid for a personal workstation or a general-purpose agent. |
+
+For most users, start with `read-only`, verify the connection, then choose `controlled` when you need assisted repairs.
+
+### 3. Recommended connection: `npx` over SSH
+
+The local `npx` runner keeps MCP's stdio transport clean and opens SSH to the binary installed on the VPS. Pin a release tag so an unexpected upstream change never alters the agent's available behavior.
+
+```json
+{
+  "mcpServers": {
+    "vps-guardian": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "github:murzirius/VPS-Guardian-MCP#v0.13.0",
+        "--host", "<VPS_IP_OR_HOSTNAME>",
+        "--user", "root",
+        "--key", "~/.ssh/id_ed25519",
+        "--mode", "controlled"
+      ]
+    }
+  }
+}
+```
+
+Every item in `args` is a separate argument. Do not combine `--host` with its value or put the full command in one field.
+
+### 4. OpenAI Codex / ChatGPT Desktop: fill in the form
+
+Open **Settings → MCP servers → Add server**, then choose **STDIO**. Enter the following values. The official Codex guidance confirms that a Desktop MCP server is saved and then restarted, and that `command`, `args`, `env`, and `cwd` are supported for STDIO servers. [OpenAI Docs](https://learn.chatgpt.com/es-419/docs/extend/mcp)
+
+| Field | Value |
+| :--- | :--- |
+| Name | `vps-guardian` |
+| Command | `npx` |
+| Arguments | Add **one row per line** in the exact order below |
+| Environment variables | Leave empty |
+| Working directory | Leave the default value |
+
+Arguments, one per row:
+
+```text
+-y
+github:murzirius/VPS-Guardian-MCP#v0.13.0
+--host
+<VPS_IP_OR_HOSTNAME>
+--user
+root
+--key
+C:\Users\<WindowsUser>\.ssh\id_ed25519
+--mode
+controlled
+```
+
+Save the server, restart Codex Desktop, and use `/mcp` to confirm that `vps-guardian` is connected. Codex Desktop, the Codex CLI, and the IDE extension share the same MCP configuration on a host. [OpenAI Docs](https://learn.chatgpt.com/es-419/docs/extend/mcp)
+
+### 5. Other common client situations
+
+#### Cursor, Windsurf, Antigravity, or another JSON-configured client
+
+Use the JSON from step 3 in that client's MCP server configuration. Keep the arguments as an array of separate strings.
+
+#### Claude Code
+
+```bash
+claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.13.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
+```
+
+#### The SSH user is not `root`
+
+Replace the value after `--user`, for example `--user deploy`. Ensure that account can read the required logs and Docker socket when you expect those tools to work. Do not give passwordless `sudo` merely to make the MCP work; use the minimum permissions needed.
+
+#### SSH uses a non-standard port
+
+Add two more arguments after the key path:
+
+```text
+--port
+2222
+```
+
+#### The private key is elsewhere or has a Windows path
+
+Set the value after `--key` to its absolute path, for example `C:\Users\<WindowsUser>\.ssh\vps_ed25519`. The key is read on the AI client's computer, never uploaded to the VPS.
+
+#### The MCP server is installed outside `/opt/vps-guardian-mcp`
+
+Add:
+
+```text
+--remote-path
+/srv/vps-guardian/.venv/bin/vps-guardian-mcp
+```
+
+#### You prefer direct OpenSSH instead of `npx`
+
+Use this only when the client can launch `ssh` directly. It bypasses the convenience runner but exposes the same MCP server:
+
+```json
+{
+  "mcpServers": {
+    "vps-guardian": {
+      "command": "ssh",
+      "args": [
+        "-q",
+        "-i", "~/.ssh/id_ed25519",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ServerAliveInterval=15",
+        "-o", "ServerAliveCountMax=4",
+        "root@<VPS_IP_OR_HOSTNAME>",
+        "env", "VPS_GUARDIAN_MODE=controlled",
+        "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp"
+      ]
+    }
+  }
+}
+```
+
+### 6. Verify the connection
+
+Ask the agent: **“Check the CPU and RAM load on my server.”** A working connection produces a structured response from `get_system_health`, rather than an SSH command for you to run.
+
+If the server fails to start:
+
+| Symptom | Check |
+| :--- | :--- |
+| `npx` is not recognized | Install Node.js 16+ on the AI client's computer, then restart the client. |
+| `Permission denied (publickey)` | Test the same key and user locally with `ssh -i <key> <user>@<host>`. |
+| Remote binary not found | Complete step 1 or pass the actual binary location using `--remote-path`. |
+| Docker or system logs are unavailable | Check the non-root account's `docker` and `systemd-journal` group membership, then start a new SSH session. |
+| MCP is saved but tools are absent in Codex | Restart Codex Desktop and inspect `/mcp`. |
+
+### 7. Upgrade safely
+
+Update **both ends** to the same release:
+
+1. On the VPS, fetch the new tag, inspect any local modifications first, then check out the new release and reinstall:
+
+   ```bash
+   cd /opt/vps-guardian-mcp
+   git status
+   git fetch --tags
+   git checkout vX.Y.Z
+   .venv/bin/pip install -e .
+   ```
+
+2. In the client MCP configuration, replace `#v0.13.0` with `#vX.Y.Z`, save, and restart the client. If you pinned a release, do not use `#main` unless you intentionally want unreleased changes.
+
+The running agent process is recreated when the MCP client reconnects, so no separate daemon restart is needed for the default SSH setup.
 
 ---
 
@@ -186,89 +376,9 @@ VPS-Guardian-MCP/
 
 ---
 
-## 🚀 Installation & Server Setup
+## 🔧 Direct OpenSSH Appendix
 
-### 1. Install on the VPS
-
-Clone the repository and install dependencies in an isolated virtual environment:
-
-```bash
-git clone https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
-cd /opt/vps-guardian-mcp
-
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
-
-### 2. Configure Permissions (Unprivileged Operation)
-
-To allow the service user to monitor Docker, network connections, and system logs without requiring root privileges:
-
-```bash
-# Add user to the docker socket group
-sudo usermod -aG docker $USER
-
-# Add user to systemd journal reader group
-sudo usermod -aG systemd-journal $USER
-```
-
-### 3. Choose a Safety Mode
-
-State-changing tools are disabled by default. Select the mode used by the remote MCP process:
-
-| Mode | Behavior |
-| :--- | :--- |
-| `read-only` | Default. Diagnostics work; writes, restarts, cleanup, backups, and updates are blocked. |
-| `controlled` | Recommended for administration. The first call returns a single-use confirmation token valid for 5 minutes. |
-| `unrestricted` | Compatibility mode. State changes execute immediately; use only in a separately secured environment. |
-
-For a controlled direct-SSH launch:
-
-```bash
-env VPS_GUARDIAN_MODE=controlled \
-    VPS_GUARDIAN_AUDIT_LOG=/var/log/vps-guardian/audit.jsonl \
-    /opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp
-```
-
-Optional: set `VPS_GUARDIAN_CONFIRM_TTL` from 30 to 3600 seconds. The default is 300.
-
----
-
-## ⚙️ Modern Client Configuration
-
-VPS-Guardian-MCP can be launched effortlessly via **`npx`** (recommended — handles SSH keepalive, timeouts, and stdio pipes automatically) or via direct **OpenSSH stdio**.
-
-### ⚡ Quickstart via NPX (Cursor, Claude Code, Antigravity, Windsurf)
-
-Run instantly without cloning, manual SSH parameter setup, or token registration via GitHub shorthand:
-
-```json
-{
-  "mcpServers": {
-    "vps-guardian": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "github:murzirius/VPS-Guardian-MCP",
-        "--host", "<YOUR_VPS_IP>",
-        "--mode", "controlled",
-        "-i", "~/.ssh/id_ed25519"
-      ]
-    }
-  }
-}
-```
-
-Or for **Claude Code** CLI terminal:
-
-```bash
-claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP --host <YOUR_VPS_IP> --mode controlled -i ~/.ssh/id_ed25519
-```
-
----
-
-### 🔧 Direct OpenSSH Stdio Configuration
+The `npx` configuration above is the recommended, version-pinned route. Use these examples only when a client cannot run the local `npx` wrapper. Add `env VPS_GUARDIAN_MODE=controlled` before the remote binary when you need controlled changes; otherwise the server starts in `read-only` mode.
 
 ### 1. 🚀 Google Antigravity 2.0 / Antigravity IDE
 Add to your global or workspace configuration in `~/.gemini/config/mcp_config.json`:
