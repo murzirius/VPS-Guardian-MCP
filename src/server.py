@@ -59,6 +59,7 @@ try:
     )
     from src.files import (
         list_directory as _list_directory,
+        set_web_file_mode as _set_web_file_mode,
         view_file_content as _view_file_content,
         write_file_content as _write_file_content,
     )
@@ -159,6 +160,7 @@ except ImportError:
     )
     from files import (
         list_directory as _list_directory,
+        set_web_file_mode as _set_web_file_mode,
         view_file_content as _view_file_content,
         write_file_content as _write_file_content,
     )
@@ -772,6 +774,25 @@ def write_file_content(
         return json.dumps(data, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.error(f"Error in write_file_content: {exc}", exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def set_web_file_mode(
+    file_path: str,
+    mode: str = "0644",
+    confirmation_token: Optional[str] = None,
+) -> str:
+    """Set a safe web-readable mode (0644 or 0640) for a static file under /var/www.
+
+    The content is untouched; arbitrary chmod modes and paths outside /var/www
+    are rejected. Controlled mode requires a confirmation token.
+    """
+    try:
+        data = _set_web_file_mode(file_path, mode, confirmation_token)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error(f"Error in set_web_file_mode: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
 
 

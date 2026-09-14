@@ -12,7 +12,7 @@ from src.safety import (
     record_audit_event,
     request_authorization,
 )
-from src.files import write_file_content
+from src.files import set_web_file_mode, write_file_content
 from src.recover import run_recovery_action
 
 
@@ -144,6 +144,22 @@ class TestSafetyGate(unittest.TestCase):
                     )
         self.assertEqual(result["status"], "ok")
         handler.assert_called_once_with("nginx")
+
+    @patch("src.files.record_audit_event", return_value="/tmp/audit.jsonl")
+    @patch("src.files.os.chmod")
+    @patch("src.files.os.stat")
+    @patch("src.files.os.path.islink", return_value=False)
+    @patch("src.files.os.path.isfile", return_value=True)
+    @patch("src.files.is_path_permitted", return_value=(True, "/var/www/site/page.html"))
+    def test_web_file_mode_is_confirmed_and_restricted(self, _permitted, _file, _link, stat, chmod, _audit):
+        stat.return_value.st_mode = 0o100600
+        with patch("src.files.os.path.realpath", return_value="/var/www"):
+            with patch.dict(os.environ, {"VPS_GUARDIAN_MODE": "controlled"}):
+                plan = set_web_file_mode("/var/www/site/page.html", "0644")
+                result = set_web_file_mode("/var/www/site/page.html", "0644", plan["confirmation_token"])
+        self.assertEqual(plan["status"], "confirmation_required")
+        self.assertEqual(result["status"], "ok")
+        chmod.assert_called_once_with("/var/www/site/page.html", 0o644)
 
 
 if __name__ == "__main__":

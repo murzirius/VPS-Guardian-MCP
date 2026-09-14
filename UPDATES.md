@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.14.1] - 2026-09-14
+
+### Added
+- Added `set_web_file_mode` for controlled, auditable `0644` or `0640` permissions on an
+  existing regular static file under `/var/www`. This lets agents publish newly created static
+  web content without resorting to a shell command or arbitrary file modes.
+
+### Security
+- The tool rejects paths outside `/var/www`, symlinks, directories, arbitrary permission masks,
+  and all content changes. It uses the existing exact-parameter confirmation and audit flow.
+
+---
+
 ## [0.14.0] - 2026-09-14
 
 ### Added

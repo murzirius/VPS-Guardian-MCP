@@ -68,7 +68,7 @@ The local `npx` runner keeps MCP's stdio transport clean and opens SSH to the bi
       "command": "npx",
       "args": [
         "-y",
-        "github:murzirius/VPS-Guardian-MCP#v0.14.0",
+        "github:murzirius/VPS-Guardian-MCP#v0.14.1",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -97,7 +97,7 @@ Arguments, one per row:
 
 ```text
 -y
-github:murzirius/VPS-Guardian-MCP#v0.14.0
+github:murzirius/VPS-Guardian-MCP#v0.14.1
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -119,7 +119,7 @@ Use the JSON from step 3 in that client's MCP server configuration. Keep the arg
 #### Claude Code
 
 ```bash
-claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.14.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
+claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.14.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
 ```
 
 #### The SSH user is not `root`
@@ -200,7 +200,7 @@ Update **both ends** to the same release:
    .venv/bin/pip install -e .
    ```
 
-2. In the client MCP configuration, replace `#v0.14.0` with `#vX.Y.Z`, save, and restart the client. If you pinned a release, do not use `#main` unless you intentionally want unreleased changes.
+2. In the client MCP configuration, replace `#v0.14.1` with `#vX.Y.Z`, save, and restart the client. If you pinned a release, do not use `#main` unless you intentionally want unreleased changes.
 
 The running agent process is recreated when the MCP client reconnects, so no separate daemon restart is needed for the default SSH setup.
 
@@ -210,11 +210,11 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.14.0` (See [UPDATES.md](UPDATES.md)) |
-| **Active MCP Tools** | **59 tools** |
+| **Version** | `0.14.1` (See [UPDATES.md](UPDATES.md)) |
+| **Active MCP Tools** | **60 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
-| **Release Status** | [v0.14.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
+| **Release Status** | [v0.14.1 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux with APT, DNF/YUM, Pacman, or Zypper; UFW, firewalld, or nftables; systemd, OpenRC, or SysVinit |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -249,6 +249,7 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 ### 4. 📁 File & Configuration Management (`src/files.py`)
 - **`view_file_content`**: Safely reads configuration files within authorized administrative paths (`/etc/nginx/`, `/etc/mysql/`, `/etc/postgresql/`, `/etc/docker/`, `/etc/caddy/`, `/var/www/`) with context-protective size bounds.
 - **`write_file_content`**: Atomically updates configuration files via temporary file staging, preserving original permissions and automatically generating timestamped backup copies (`.bak.<timestamp>`).
+- **`set_web_file_mode`**: Token-confirmed, intentionally limited `0644` or `0640` permissions for an existing regular static file under `/var/www/`; it never changes file content or accepts arbitrary chmod modes.
 - **`list_directory`**: Explores directory structures up to configurable depth limits within permitted paths.
 
 ### 5. 🌍 Web Server & SSL Diagnostics (`src/web.py`)
@@ -355,7 +356,7 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.14.0)
+│   ├── __init__.py          # Package version (v0.14.1)
 │   ├── server.py            # FastMCP server, resources, prompts, and tool registry (51 tools)
 │   ├── safety.py            # Confirmation tokens, execution modes, and audit log
 │   ├── incident.py          # Unified severity-ranked incident report
@@ -492,7 +493,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ---
 
-## 🛠️ Tools Reference (59 Active Tools)
+## 🛠️ Tools Reference (60 Active Tools)
 
 | Tool Name | Parameters | Description |
 | :--- | :--- | :--- |
@@ -528,6 +529,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `get_firewall_status` | *none* | Normalized UFW, firewalld, or nftables status |
 | `view_file_content` | `file_path` (*string*), `max_bytes` (*int*) | Reads authorized configuration files with size bounding |
 | `write_file_content` | `file_path`, `content`, `backup`, `confirmation_token` (*optional*) | Token-confirmed atomic config update with backup |
+| `set_web_file_mode` | `file_path`, `mode`, `confirmation_token` (*optional*) | Token-confirmed 0644/0640 permissions for a static file under `/var/www` |
 | `list_directory` | `dir_path` (*string*), `max_depth` (*int*) | Lists directory contents within authorized paths |
 | `plan_config_deployment` | `file_path`, `content`, `service_name` (*optional*) | Validates and diffs an Nginx config/Caddyfile candidate without changing the live config |
 | `deploy_config_change` | `deployment_id`, `confirmation_token` (*optional*) | Atomically deploys a plan, reloads it, checks health, and rolls back on failure |

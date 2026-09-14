@@ -328,6 +328,49 @@ def write_file_content(
     return audited(atomic_write_file(canonical_path, content, backup=backup))
 
 
+def set_web_file_mode(
+    file_path: str,
+    mode: str = "0644",
+    confirmation_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Set a safe, web-readable mode for a regular static file under /var/www.
+
+    This intentionally does not expose arbitrary chmod semantics. It supports
+    only 0644 (public static content) and 0640 (group-readable private content)
+    and never follows a path outside the permitted web root.
+    """
+    if not isinstance(file_path, str) or not file_path.strip():
+        return {"status": "error", "error": "file_path must be a non-empty string."}
+    allowed, canonical_path = is_path_permitted(file_path.strip())
+    web_root = os.path.realpath("/var/www")
+    normalized_path = canonical_path.replace("\\", "/")
+    normalized_web_root = web_root.replace("\\", "/").rstrip("/")
+    if not allowed or not (normalized_path == normalized_web_root or normalized_path.startswith(normalized_web_root + "/")):
+        return {"status": "forbidden", "error": "Only files under /var/www may receive web file modes.", "file_path": canonical_path}
+    if not os.path.isfile(canonical_path) or os.path.islink(canonical_path):
+        return {"status": "error", "error": "file_path must be an existing regular file.", "file_path": canonical_path}
+    normalized_mode = str(mode).strip()
+    allowed_modes = {"0644": 0o644, "0640": 0o640}
+    if normalized_mode not in allowed_modes:
+        return {"status": "error", "error": "mode must be either '0644' or '0640'."}
+    parameters = {"file_path": canonical_path, "mode": normalized_mode}
+    authorization = request_authorization(
+        "set_web_file_mode", parameters,
+        "Change a static web file's read permissions without altering its content.",
+        confirmation_token,
+    )
+    if authorization is not None:
+        return authorization
+    try:
+        before_mode = format(os.stat(canonical_path).st_mode & 0o777, "04o")
+        os.chmod(canonical_path, allowed_modes[normalized_mode])
+        result = {"status": "ok", "success": True, "file_path": canonical_path, "previous_mode": before_mode, "mode": normalized_mode}
+    except OSError as exc:
+        result = {"status": "error", "success": False, "file_path": canonical_path, "error": str(exc)}
+    result["audit_log_path"] = record_audit_event("set_web_file_mode", parameters, result)
+    return result
+
+
 def list_directory(dir_path: str, max_depth: int = 1) -> Dict[str, Any]:
     """Inspect file and directory structures within authorized administrative paths.
 
