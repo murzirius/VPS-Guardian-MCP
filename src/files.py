@@ -20,6 +20,11 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger("vps_guardian.files")
 
 try:
+    from src.resource_policy import get_runtime_budget
+except ImportError:
+    from resource_policy import get_runtime_budget
+
+try:
     from src.safety import record_audit_event, request_authorization
 except ImportError:
     from safety import record_audit_event, request_authorization
@@ -466,7 +471,7 @@ def list_directory(dir_path: str, max_depth: int = 1) -> Dict[str, Any]:
             prefix = "" if rel_root == "." else rel_root.replace("\\", "/") + "/"
 
             for d in sorted(dirs):
-                if len(items) >= MAX_DIRECTORY_ITEMS:
+                if len(items) >= min(MAX_DIRECTORY_ITEMS, get_runtime_budget()["limits"]["directory_items"]):
                     truncated = True
                     dirs.clear()
                     break
@@ -481,7 +486,7 @@ def list_directory(dir_path: str, max_depth: int = 1) -> Dict[str, Any]:
                 })
 
             for f in sorted(files):
-                if len(items) >= MAX_DIRECTORY_ITEMS:
+                if len(items) >= min(MAX_DIRECTORY_ITEMS, get_runtime_budget()["limits"]["directory_items"]):
                     truncated = True
                     dirs.clear()
                     break

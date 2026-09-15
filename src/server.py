@@ -152,6 +152,13 @@ try:
         record_session_finding as _record_session_finding,
         start_agent_session as _start_agent_session,
     )
+    from src.changeset import (
+        apply_change_set as _apply_change_set,
+        begin_change_set as _begin_change_set,
+        preview_change_set as _preview_change_set,
+        stage_file_change as _stage_file_change,
+    )
+    from src.resource_policy import get_runtime_budget as _get_runtime_budget
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -268,6 +275,13 @@ except ImportError:
         record_session_finding as _record_session_finding,
         start_agent_session as _start_agent_session,
     )
+    from changeset import (
+        apply_change_set as _apply_change_set,
+        begin_change_set as _begin_change_set,
+        preview_change_set as _preview_change_set,
+        stage_file_change as _stage_file_change,
+    )
+    from resource_policy import get_runtime_budget as _get_runtime_budget
 
 # Initialize FastMCP Server
 mcp = FastMCP(
@@ -755,6 +769,36 @@ def open_event_watch(target: str, session_id: Optional[str] = None, ttl_minutes:
 def get_event_watch(watch_id: str, limit: int = 50) -> str:
     """Retrieve events seen since an active event watch was opened; this does not push notifications."""
     return json.dumps(_get_event_watch(watch_id, limit), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def begin_change_set(title: str, target: Optional[str] = None) -> str:
+    """Open a short-lived, bounded, reversible Nginx configuration ChangeSet."""
+    return json.dumps(_begin_change_set(title, target), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def stage_file_change(change_set_id: str, file_path: str, content: str) -> str:
+    """Stage one Nginx configuration change; content is not applied yet."""
+    return json.dumps(_stage_file_change(change_set_id, file_path, content), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def preview_change_set(change_set_id: str) -> str:
+    """Show secret-redacted diffs and request one confirmation for a ChangeSet."""
+    return json.dumps(_preview_change_set(change_set_id), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def apply_change_set(change_set_id: str, confirmation_token: Optional[str] = None) -> str:
+    """Apply, validate, reload, health-check, and automatically roll back one ChangeSet."""
+    return json.dumps(_apply_change_set(change_set_id, confirmation_token), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_runtime_budget() -> str:
+    """Show the active low-resource profile and limits VPS-Guardian applies on this host."""
+    return json.dumps(_get_runtime_budget(), indent=2, ensure_ascii=False)
 
 
 # ============================================================================

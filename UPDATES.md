@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.17.0] - 2026-09-15
+
+### Added
+- **ChangeSets (`src/changeset.py`)**: Added bounded, in-memory Nginx configuration transactions:
+  stage up to three files, review secret-redacted diffs, confirm once, validate with `nginx -t`,
+  reload, health-check, and roll back all staged files on failure.
+- **Low-resource runtime (`src/resource_policy.py`)**: Added adaptive budgets for endpoint response
+  size, directory listings, journal reads, and ChangeSet size/count on single-core or low-memory VPSs.
+
+### Reliability
+- Guardian remains fully on-demand: no background polling workers, bounded in-memory ChangeSets,
+  and strict TTL cleanup prevent it from competing with hosted applications on small VPSs.
+
+---
+
 ## [0.16.1] - 2026-09-15
 
 ### Security

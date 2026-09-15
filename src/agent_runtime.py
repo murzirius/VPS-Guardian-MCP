@@ -15,6 +15,10 @@ try:
     from src.safety import get_audit_events
 except ImportError:  # pragma: no cover - direct script compatibility
     from safety import get_audit_events
+try:
+    from src.resource_policy import get_runtime_budget
+except ImportError:
+    from resource_policy import get_runtime_budget
 
 
 MAX_TEXT = 1000
@@ -198,7 +202,8 @@ def get_recent_server_events(since_minutes: int = 30, limit: int = 50, target: O
     journal = "/usr/bin/journalctl" if os.path.exists("/usr/bin/journalctl") else None
     if journal:
         try:
-            result = subprocess.run([journal, "--no-pager", "-o", "short-iso", "--since", f"{since_minutes} minutes ago", "-n", "500"], capture_output=True, text=True, timeout=12, check=False)
+            journal_lines = get_runtime_budget()["limits"]["journal_lines"]
+            result = subprocess.run([journal, "--no-pager", "-o", "short-iso", "--since", f"{since_minutes} minutes ago", "-n", str(journal_lines)], capture_output=True, text=True, timeout=12, check=False)
             pattern = re.compile(r"(?i)\b(failed|error|oom|out of memory|killed|restart|unhealthy|segfault|panic)\b")
             for line in result.stdout.splitlines():
                 if pattern.search(line) and (not needle or needle in line.lower()):

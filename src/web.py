@@ -23,6 +23,11 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("vps_guardian.web")
 
+try:
+    from src.resource_policy import get_runtime_budget
+except ImportError:
+    from resource_policy import get_runtime_budget
+
 MAX_HTTP_TIMEOUT_SECONDS = 30
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_REDIRECTS = 5
@@ -95,7 +100,8 @@ def _request_public_url(url: str, timeout_seconds: int) -> Dict[str, Any]:
         try:
             connection.request("GET", path, headers={"Host": host_header, "User-Agent": "VPS-Guardian-MCP/0.16 endpoint-check", "Connection": "close"})
             response = connection.getresponse()
-            body = response.read(MAX_RESPONSE_BYTES + 1)
+            response_limit = get_runtime_budget()["limits"]["http_response_bytes"]
+            body = response.read(response_limit + 1)
             status = response.status
             location = response.getheader("Location")
             headers = response.headers
@@ -140,8 +146,9 @@ def check_http_endpoint(
         response = _request_public_url(parsed.geturl(), timeout_seconds)
         body = response["body"]
         elapsed_ms = round((time.monotonic() - started) * 1000, 1)
-        truncated = len(body) > MAX_RESPONSE_BYTES
-        body = body[:MAX_RESPONSE_BYTES]
+        response_limit = get_runtime_budget()["limits"]["http_response_bytes"]
+        truncated = len(body) > response_limit
+        body = body[:response_limit]
         charset = response["headers"].get_content_charset() or "utf-8"
         text = body.decode(charset, errors="replace") if expected_text is not None else ""
         actual_status = response["status"]

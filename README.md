@@ -68,7 +68,7 @@ The local `npx` runner keeps MCP's stdio transport clean and opens SSH to the bi
       "command": "npx",
       "args": [
         "-y",
-        "github:murzirius/VPS-Guardian-MCP#v0.16.1",
+        "github:murzirius/VPS-Guardian-MCP#v0.17.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -97,7 +97,7 @@ Arguments, one per row:
 
 ```text
 -y
-github:murzirius/VPS-Guardian-MCP#v0.16.1
+github:murzirius/VPS-Guardian-MCP#v0.17.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -119,7 +119,7 @@ Use the JSON from step 3 in that client's MCP server configuration. Keep the arg
 #### Claude Code
 
 ```bash
-claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.16.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
+claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.17.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
 ```
 
 #### The SSH user is not `root`
@@ -210,11 +210,11 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.16.1` (See [UPDATES.md](UPDATES.md)) |
+| **Version** | `0.17.0` (See [UPDATES.md](UPDATES.md)) |
 | **Active MCP Tools** | **60 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
-| **Release Status** | [v0.16.1 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
+| **Release Status** | [v0.17.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux with APT, DNF/YUM, Pacman, or Zypper; UFW, firewalld, or nftables; systemd, OpenRC, or SysVinit |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -263,6 +263,10 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 ### Agent Sessions & Live Server Events (`src/agent_runtime.py`)
 - **Agent Sessions**: Expiring shared task context with bounded, secret-redacted findings, handoffs, outcomes, and short-lived workload locks.
 - **Live Server Events**: A compact timeline joining VPS-Guardian audit events with important journal entries; event watches provide a resumable cursor for a workload.
+
+### ChangeSets & Low-Resource Runtime
+- **ChangeSets**: Stage up to three bounded Nginx configuration files, review secret-redacted diffs, confirm once, then validate, reload, health-check, and roll back together on failure.
+- **`get_runtime_budget`**: Shows the adaptive limits used on constrained hosts; Guardian stays on-demand and never launches background polling workers.
 
 ### 6. 🔒 Security Auditing & Intrusion Detection (`src/security.py`)
 - **`check_failed_logins`**: Analyzes recent failed SSH authentications to surface brute-force attackers and repeat offending IP addresses.
@@ -363,7 +367,7 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.16.1)
+│   ├── __init__.py          # Package version (v0.17.0)
 │   ├── server.py            # FastMCP server, resources, prompts, and tool registry (51 tools)
 │   ├── safety.py            # Confirmation tokens, execution modes, and audit log
 │   ├── incident.py          # Unified severity-ranked incident report
@@ -500,7 +504,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ---
 
-## 🛠️ Tools Reference (73 Active Tools)
+## 🛠️ Tools Reference (78 Active Tools)
 
 | Tool Name | Parameters | Description |
 | :--- | :--- | :--- |
@@ -539,6 +543,11 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `get_recent_server_events` | `since_minutes`, `limit`, `target` | Joins Guardian audit and notable journal events into one timeline |
 | `open_event_watch` | `target`, `session_id`, `ttl_minutes` | Opens an expiring workload event cursor |
 | `get_event_watch` | `watch_id`, `limit` | Retrieves events since an event watch was opened |
+| `begin_change_set` | `title`, `target` | Opens a short-lived reversible Nginx configuration ChangeSet |
+| `stage_file_change` | `change_set_id`, `file_path`, `content` | Stages a bounded Nginx config edit without applying it |
+| `preview_change_set` | `change_set_id` | Shows secret-redacted diffs and prepares one confirmation |
+| `apply_change_set` | `change_set_id`, `confirmation_token` | Validates, reloads, health-checks, and rolls back a ChangeSet |
+| `get_runtime_budget` | *none* | Shows low-resource profile and active operation limits |
 | `get_open_ports` | *none* | Discovers all listening ports (TCP/UDP, IPv4/IPv6) with process names and PIDs |
 | `get_ufw_status` | *none* | Audits UFW firewall state, default traffic policies, and active rules |
 | `get_platform_capabilities` | *none* | Detects cross-distro management backends |
