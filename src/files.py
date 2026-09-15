@@ -14,6 +14,7 @@ import logging
 import os
 import shutil
 import tempfile
+import re
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("vps_guardian.files")
@@ -32,6 +33,21 @@ DEFAULT_ALLOWED_DIRECTORIES = [
     "/etc/caddy",
     "/var/www",
 ]
+_SENSITIVE_CONFIG_VALUE = re.compile(
+    r"(?im)^(\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_.-]*"
+    r"(?:password|passwd|secret|token|api[_-]?key|private[_-]?key|key|credential|authorization|cookie)"
+    r"[A-Za-z0-9_.-]*\s*[:=]\s*)([^\r\n#]+)"
+)
+_URL_CREDENTIALS = re.compile(r"(?i)(://[^\s/:@]+:)([^\s@/]+)(@)")
+MAX_FILE_WRITE_BYTES = 2 * 1024 * 1024
+MAX_DIRECTORY_ITEMS = 5000
+
+
+def _redact_config_text(text: str) -> tuple[str, int]:
+    """Remove common inline secret values before config text leaves the VPS."""
+    redacted, count = _SENSITIVE_CONFIG_VALUE.subn(r"\1***REDACTED***", text)
+    redacted, url_count = _URL_CREDENTIALS.subn(r"\1***REDACTED***\3", redacted)
+    return redacted, count + url_count
 
 
 def _format_bytes(bytes_value: int | float) -> str:
@@ -140,7 +156,7 @@ def view_file_content(file_path: str, max_bytes: int = 50000) -> Dict[str, Any]:
                 "size_bytes": total_size,
             }
 
-        text_content = raw_data.decode("utf-8", errors="replace")
+        text_content, redacted_fields = _redact_config_text(raw_data.decode("utf-8", errors="replace"))
         is_truncated = total_size > max_bytes
 
         return {
@@ -154,6 +170,7 @@ def view_file_content(file_path: str, max_bytes: int = 50000) -> Dict[str, Any]:
                 file_stat.st_mtime, datetime.timezone.utc
             ).isoformat(),
             "content": text_content,
+            "redacted_fields": redacted_fields,
         }
     except PermissionError as exc:
         return {
@@ -285,6 +302,8 @@ def write_file_content(
         return {"status": "error", "error": "file_path must be a non-empty string."}
     if not isinstance(content, str):
         return {"status": "error", "error": "content must be a string."}
+    if len(content.encode("utf-8")) > MAX_FILE_WRITE_BYTES:
+        return {"status": "error", "error": "content exceeds the 2 MiB safe write limit."}
 
     allowed, canonical_path = is_path_permitted(file_path.strip())
     if not allowed:
@@ -318,6 +337,17 @@ def write_file_content(
     )
     if authorization is not None:
         return authorization
+
+    # Re-resolve after the potentially long confirmation step so an attacker cannot
+    # swap a symlink or parent directory between planning and the atomic replace.
+    still_allowed, stable_path = is_path_permitted(file_path.strip())
+    if not still_allowed or stable_path != canonical_path or os.path.islink(canonical_path):
+        return {
+            "status": "forbidden",
+            "success": False,
+            "error": "Target path changed after authorization; refusing to write.",
+            "file_path": stable_path,
+        }
 
     def audited(result: Dict[str, Any]) -> Dict[str, Any]:
         result["audit_log_path"] = record_audit_event(
@@ -362,6 +392,11 @@ def set_web_file_mode(
     if authorization is not None:
         return authorization
     try:
+        still_allowed, stable_path = is_path_permitted(file_path.strip())
+        if not still_allowed or stable_path != canonical_path or os.path.islink(canonical_path):
+            result = {"status": "forbidden", "success": False, "file_path": stable_path, "error": "Target path changed after authorization; refusing to change permissions."}
+            result["audit_log_path"] = record_audit_event("set_web_file_mode", parameters, result)
+            return result
         before_mode = format(os.stat(canonical_path).st_mode & 0o777, "04o")
         os.chmod(canonical_path, allowed_modes[normalized_mode])
         result = {"status": "ok", "success": True, "file_path": canonical_path, "previous_mode": before_mode, "mode": normalized_mode}
@@ -416,6 +451,7 @@ def list_directory(dir_path: str, max_depth: int = 1) -> Dict[str, Any]:
 
     max_depth = max(1, min(int(max_depth), 3))
     items: List[Dict[str, Any]] = []
+    truncated = False
 
     try:
         base_depth = canonical_path.rstrip(os.sep).count(os.sep)
@@ -430,6 +466,10 @@ def list_directory(dir_path: str, max_depth: int = 1) -> Dict[str, Any]:
             prefix = "" if rel_root == "." else rel_root.replace("\\", "/") + "/"
 
             for d in sorted(dirs):
+                if len(items) >= MAX_DIRECTORY_ITEMS:
+                    truncated = True
+                    dirs.clear()
+                    break
                 full_dir = os.path.join(root, d)
                 items.append({
                     "name": f"{prefix}{d}/",
@@ -441,6 +481,10 @@ def list_directory(dir_path: str, max_depth: int = 1) -> Dict[str, Any]:
                 })
 
             for f in sorted(files):
+                if len(items) >= MAX_DIRECTORY_ITEMS:
+                    truncated = True
+                    dirs.clear()
+                    break
                 full_file = os.path.join(root, f)
                 try:
                     f_stat = os.stat(full_file)
@@ -464,10 +508,14 @@ def list_directory(dir_path: str, max_depth: int = 1) -> Dict[str, Any]:
                         "modified": "",
                     })
 
+            if truncated:
+                break
+
         return {
             "status": "ok",
             "dir_path": canonical_path,
             "total_items": len(items),
+            "truncated": truncated,
             "items": items,
         }
 

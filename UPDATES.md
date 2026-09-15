@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.16.1] - 2026-09-15
+
+### Security
+- Blocked SSRF in HTTP endpoint checks: every URL and redirect is resolved once, pinned to a
+  public IP, and rejects loopback, private, link-local, reserved, multicast, and credentialed URLs.
+- Redacted common secret assignments and URL credentials from configuration reads, audit errors,
+  and agent-session/event text.
+- Hardened self-updates: require the official GitHub `origin`, use fetch plus fast-forward-only
+  merge, and report failed package reinstalls instead of treating them as successful updates.
+- Re-validate file targets after confirmation to prevent a symlink/path swap before writes or chmod.
+
+### Reliability
+- Added 2 MiB file-write and 5,000 directory-entry bounds to protect agent context and VPS memory.
+
+---
+
 ## [0.16.0] - 2026-09-15
 
 ### Added

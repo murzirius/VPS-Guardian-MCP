@@ -68,7 +68,7 @@ The local `npx` runner keeps MCP's stdio transport clean and opens SSH to the bi
       "command": "npx",
       "args": [
         "-y",
-        "github:murzirius/VPS-Guardian-MCP#v0.16.0",
+        "github:murzirius/VPS-Guardian-MCP#v0.16.1",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -97,7 +97,7 @@ Arguments, one per row:
 
 ```text
 -y
-github:murzirius/VPS-Guardian-MCP#v0.16.0
+github:murzirius/VPS-Guardian-MCP#v0.16.1
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -119,7 +119,7 @@ Use the JSON from step 3 in that client's MCP server configuration. Keep the arg
 #### Claude Code
 
 ```bash
-claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.16.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
+claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.16.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
 ```
 
 #### The SSH user is not `root`
@@ -210,11 +210,11 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.16.0` (See [UPDATES.md](UPDATES.md)) |
+| **Version** | `0.16.1` (See [UPDATES.md](UPDATES.md)) |
 | **Active MCP Tools** | **60 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
-| **Release Status** | [v0.16.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
+| **Release Status** | [v0.16.1 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux with APT, DNF/YUM, Pacman, or Zypper; UFW, firewalld, or nftables; systemd, OpenRC, or SysVinit |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -363,7 +363,7 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.16.0)
+│   ├── __init__.py          # Package version (v0.16.1)
 │   ├── server.py            # FastMCP server, resources, prompts, and tool registry (51 tools)
 │   ├── safety.py            # Confirmation tokens, execution modes, and audit log
 │   ├── incident.py          # Unified severity-ranked incident report

@@ -9,21 +9,105 @@ Provides safe diagnostic tools for:
 from __future__ import annotations
 
 import datetime
+import http.client
+import ipaddress
 import logging
 import os
 import re
 import shutil
+import socket
 import subprocess
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("vps_guardian.web")
 
 MAX_HTTP_TIMEOUT_SECONDS = 30
 MAX_RESPONSE_BYTES = 256 * 1024
+MAX_REDIRECTS = 5
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """HTTP connection that cannot resolve a hostname again after validation."""
+
+    def __init__(self, host: str, port: int, pinned_ip: str, timeout: int):
+        super().__init__(host, port, timeout=timeout)
+        self._pinned_ip = pinned_ip
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS equivalent preserving the hostname for TLS SNI and certificate checks."""
+
+    def __init__(self, host: str, port: int, pinned_ip: str, timeout: int):
+        super().__init__(host, port, timeout=timeout)
+        self._pinned_ip = pinned_ip
+
+    def connect(self) -> None:
+        sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+def _public_ip_for_host(host: str) -> str:
+    """Resolve a hostname once and reject all non-public answers (SSRF guard)."""
+    try:
+        answers = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError(f"Could not resolve hostname: {exc}") from exc
+    addresses = list(dict.fromkeys(item[4][0] for item in answers))
+    if not addresses:
+        raise ValueError("Hostname did not resolve to an address.")
+    parsed = [ipaddress.ip_address(address) for address in addresses]
+    if any(not address.is_global for address in parsed):
+        raise ValueError("URL resolves to a non-public address, which is not permitted.")
+    return str(parsed[0])
+
+
+def _validate_public_url(value: str) -> urllib.parse.ParseResult:
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Only absolute http:// or https:// URLs are supported.")
+    if parsed.username or parsed.password:
+        raise ValueError("URLs with embedded credentials are not permitted.")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("URL contains an invalid port.") from exc
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("URL contains an invalid port.")
+    return parsed
+
+
+def _request_public_url(url: str, timeout_seconds: int) -> Dict[str, Any]:
+    """Perform a bounded GET while pinning every redirect to a public IP."""
+    current_url = url
+    for redirect_count in range(MAX_REDIRECTS + 1):
+        parsed = _validate_public_url(current_url)
+        host = parsed.hostname or ""
+        pinned_ip = _public_ip_for_host(host)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        connection = (_PinnedHTTPSConnection if parsed.scheme == "https" else _PinnedHTTPConnection)(host, port, pinned_ip, timeout_seconds)
+        path = urllib.parse.urlunparse(("", "", parsed.path or "/", parsed.params, parsed.query, ""))
+        host_header = host if parsed.port is None else f"{host}:{port}"
+        try:
+            connection.request("GET", path, headers={"Host": host_header, "User-Agent": "VPS-Guardian-MCP/0.16 endpoint-check", "Connection": "close"})
+            response = connection.getresponse()
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            status = response.status
+            location = response.getheader("Location")
+            headers = response.headers
+        finally:
+            connection.close()
+        if status in {301, 302, 303, 307, 308} and location:
+            if redirect_count == MAX_REDIRECTS:
+                raise ValueError("Endpoint exceeded the maximum redirect limit.")
+            current_url = urllib.parse.urljoin(current_url, location)
+            continue
+        return {"url": current_url, "status": status, "body": body, "headers": headers, "redirected": current_url != url}
+    raise ValueError("Endpoint exceeded the maximum redirect limit.")
 
 
 def check_http_endpoint(
@@ -40,9 +124,10 @@ def check_http_endpoint(
     """
     if not isinstance(url, str) or len(url) > 2048:
         return {"status": "error", "error": "url must be a non-empty URL up to 2048 characters."}
-    parsed = urllib.parse.urlparse(url.strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return {"status": "error", "error": "Only absolute http:// or https:// URLs are supported."}
+    try:
+        parsed = _validate_public_url(url.strip())
+    except ValueError as exc:
+        return {"status": "error", "error": str(exc)}
     if not isinstance(expected_status, int) or not 100 <= expected_status <= 599:
         return {"status": "error", "error": "expected_status must be an HTTP status from 100 to 599."}
     if expected_text is not None and (not isinstance(expected_text, str) or len(expected_text) > 512):
@@ -50,49 +135,19 @@ def check_http_endpoint(
     if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= MAX_HTTP_TIMEOUT_SECONDS:
         return {"status": "error", "error": f"timeout_seconds must be between 1 and {MAX_HTTP_TIMEOUT_SECONDS}."}
 
-    request = urllib.request.Request(
-        parsed.geturl(),
-        headers={"User-Agent": "VPS-Guardian-MCP/0.15 endpoint-check"},
-        method="GET",
-    )
     started = time.monotonic()
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            body = response.read(MAX_RESPONSE_BYTES + 1)
-            elapsed_ms = round((time.monotonic() - started) * 1000, 1)
-            truncated = len(body) > MAX_RESPONSE_BYTES
-            body = body[:MAX_RESPONSE_BYTES]
-            charset = response.headers.get_content_charset() or "utf-8"
-            text = body.decode(charset, errors="replace") if expected_text is not None else ""
-            actual_status = response.getcode()
-            text_found = expected_text in text if expected_text is not None else None
-            checks_passed = actual_status == expected_status and (text_found is not False)
-            return {
-                "status": "ok" if checks_passed else "warning",
-                "url": parsed.geturl(),
-                "final_url": response.geturl(),
-                "http_status": actual_status,
-                "expected_status": expected_status,
-                "latency_ms": elapsed_ms,
-                "content_type": response.headers.get("Content-Type"),
-                "redirected": response.geturl() != parsed.geturl(),
-                "expected_text_checked": expected_text is not None,
-                "expected_text_found": text_found,
-                "response_truncated": truncated,
-                "healthy": checks_passed,
-            }
-    except urllib.error.HTTPError as exc:
+        response = _request_public_url(parsed.geturl(), timeout_seconds)
+        body = response["body"]
         elapsed_ms = round((time.monotonic() - started) * 1000, 1)
-        return {
-            "status": "warning",
-            "url": parsed.geturl(),
-            "final_url": exc.geturl(),
-            "http_status": exc.code,
-            "expected_status": expected_status,
-            "latency_ms": elapsed_ms,
-            "healthy": False,
-            "error": f"Endpoint returned HTTP {exc.code}.",
-        }
+        truncated = len(body) > MAX_RESPONSE_BYTES
+        body = body[:MAX_RESPONSE_BYTES]
+        charset = response["headers"].get_content_charset() or "utf-8"
+        text = body.decode(charset, errors="replace") if expected_text is not None else ""
+        actual_status = response["status"]
+        text_found = expected_text in text if expected_text is not None else None
+        checks_passed = actual_status == expected_status and (text_found is not False)
+        return {"status": "ok" if checks_passed else "warning", "url": parsed.geturl(), "final_url": response["url"], "http_status": actual_status, "expected_status": expected_status, "latency_ms": elapsed_ms, "content_type": response["headers"].get("Content-Type"), "redirected": response["redirected"], "expected_text_checked": expected_text is not None, "expected_text_found": text_found, "response_truncated": truncated, "healthy": checks_passed}
     except Exception as exc:
         elapsed_ms = round((time.monotonic() - started) * 1000, 1)
         return {

@@ -21,6 +21,11 @@ _SENSITIVE_KEY_PATTERN = re.compile(
     r"(pass(word)?|secret|token|key|credential|authorization|cookie|content)",
     re.IGNORECASE,
 )
+_SENSITIVE_TEXT_PATTERN = re.compile(
+    r"(?i)\b(password|passwd|secret|token|api[_-]?key|private[_-]?key|"
+    r"credential|authorization|cookie)\s*[:=]\s*['\"]?[^\s,;\"']+"
+)
+_URL_CREDENTIAL_PATTERN = re.compile(r"(?i)(://[^\s/:@]+:)[^\s@/]+(@)")
 _pending_confirmations: Dict[str, Dict[str, Any]] = {}
 _confirmation_lock = threading.Lock()
 _audit_lock = threading.Lock()
@@ -72,12 +77,8 @@ def _scrub_text(value: Any) -> Optional[str]:
     if value is None:
         return None
     text = str(value)[:500]
-    return re.sub(
-        r"(?i)\b(password|passwd|secret|token|api[_-]?key|authorization)"
-        r"\s*[:=]\s*[^\s,;]+",
-        r"\1=***REDACTED***",
-        text,
-    )
+    redacted = _SENSITIVE_TEXT_PATTERN.sub(r"\1=***REDACTED***", text)
+    return _URL_CREDENTIAL_PATTERN.sub(r"\1***REDACTED***\2", redacted)
 
 
 def request_authorization(

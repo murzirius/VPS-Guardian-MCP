@@ -21,7 +21,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import psutil
 
@@ -121,7 +121,6 @@ def _fetch_docker_logs(container_name: str, lines_count: int) -> Dict[str, Any]:
     """Read logs from a Docker container safely."""
     try:
         import docker
-        from docker.errors import DockerException, NotFound
         client = docker.from_env()
         container = client.containers.get(container_name)
         raw_logs = container.logs(tail=lines_count, stdout=True, stderr=True, timestamps=True)
@@ -352,7 +351,6 @@ def _action_clean_docker_cache() -> Dict[str, Any]:
     """Perform deep Docker cleanup: containers, images, volumes, and build cache."""
     try:
         import docker
-        from docker.errors import DockerException
         client = docker.from_env()
 
         c_prune = client.containers.prune()
@@ -406,7 +404,6 @@ def _action_clean_docker_cache() -> Dict[str, Any]:
 
 def _action_clean_system_logs() -> Dict[str, Any]:
     """Clean systemd journal logs older than 3 days and prune rotated logs in /var/log."""
-    reclaimed_journal = "0 B"
     journalctl_bin = shutil.which("journalctl")
     journal_msg = ""
 
@@ -723,6 +720,30 @@ def _action_update_guardian() -> Dict[str, Any]:
             "error": "Could not locate VPS-Guardian-MCP git repository directory.",
         }
 
+    # A root-owned self-updater must not execute code from a repository whose
+    # origin was silently repointed. Keep the trust boundary explicit.
+    expected_origins = {
+        "https://github.com/murzirius/VPS-Guardian-MCP.git",
+        "git@github.com:murzirius/VPS-Guardian-MCP.git",
+    }
+    try:
+        origin_res = subprocess.run(
+            [git_bin, "-C", repo_dir, "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        origin = origin_res.stdout.strip().removesuffix("/")
+        if origin_res.returncode != 0 or origin not in expected_origins:
+            return {
+                "status": "forbidden",
+                "success": False,
+                "error": "Guardian update requires the official GitHub origin remote.",
+            }
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"status": "error", "success": False, "error": f"Could not verify Git origin: {exc}"}
+
     try:
         # Step 1: Record pre-update commit
         pre_commit = "unknown"
@@ -736,9 +757,10 @@ def _action_update_guardian() -> Dict[str, Any]:
         if pre_res.returncode == 0:
             pre_commit = pre_res.stdout.strip()
 
-        # Step 2: Git pull origin main
+        # Step 2: Fetch and accept only a fast-forward update. Unlike `git pull`,
+        # this never creates a merge commit from unexpected local history.
         pull_res = subprocess.run(
-            [git_bin, "-C", repo_dir, "pull", "origin", "main"],
+            [git_bin, "-C", repo_dir, "fetch", "--no-tags", "origin", "main"],
             capture_output=True,
             text=True,
             check=False,
@@ -749,7 +771,22 @@ def _action_update_guardian() -> Dict[str, Any]:
             return {
                 "status": "error",
                 "success": False,
-                "error": f"git pull failed: {pull_out}",
+                "error": f"git fetch failed: {pull_out}",
+            }
+
+        merge_res = subprocess.run(
+            [git_bin, "-C", repo_dir, "merge", "--ff-only", "FETCH_HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        merge_out = merge_res.stdout.strip() or merge_res.stderr.strip()
+        if merge_res.returncode != 0:
+            return {
+                "status": "error",
+                "success": False,
+                "error": f"Refusing non-fast-forward Guardian update: {merge_out}",
             }
 
         # Step 3: Record post-update commit
@@ -775,7 +812,6 @@ def _action_update_guardian() -> Dict[str, Any]:
                 pip_bin = cand
                 break
 
-        pip_out = ""
         if pip_bin:
             pip_res = subprocess.run(
                 [pip_bin, "install", "-e", repo_dir],
@@ -784,7 +820,13 @@ def _action_update_guardian() -> Dict[str, Any]:
                 check=False,
                 timeout=60,
             )
-            pip_out = pip_res.stdout.strip() or pip_res.stderr.strip()
+            if pip_res.returncode != 0:
+                pip_out = (pip_res.stdout.strip() or pip_res.stderr.strip())[-1000:]
+                return {
+                    "status": "error",
+                    "success": False,
+                    "error": f"Package reinstall failed after update: {pip_out}",
+                }
 
         return {
             "status": "ok",
@@ -792,7 +834,7 @@ def _action_update_guardian() -> Dict[str, Any]:
             "action": "update_guardian",
             "previous_commit": pre_commit,
             "updated_commit": post_commit,
-            "git_output": pull_out,
+            "git_output": merge_out or pull_out,
             "pip_reinstalled": pip_bin is not None,
             "message": (
                 f"VPS-Guardian-MCP updated from {pre_commit} to {post_commit}. "

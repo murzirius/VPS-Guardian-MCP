@@ -18,7 +18,8 @@ except ImportError:  # pragma: no cover - direct script compatibility
 
 
 MAX_TEXT = 1000
-SENSITIVE = re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key|authorization|cookie)\s*[:=]\s*[^\s,;]+")
+SENSITIVE = re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|authorization|cookie)\s*[:=]\s*['\"]?[^\s,;\"']+")
+URL_CREDENTIALS = re.compile(r"(?i)(://[^\s/:@]+:)[^\s@/]+(@)")
 IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{7,63}$")
 
 
@@ -45,7 +46,8 @@ def _iso(value: Optional[dt.datetime] = None) -> str:
 
 
 def _scrub(value: str) -> str:
-    return SENSITIVE.sub(lambda item: f"{item.group(1)}=***REDACTED***", value.strip()[:MAX_TEXT])
+    redacted = SENSITIVE.sub(lambda item: f"{item.group(1)}=***REDACTED***", value.strip()[:MAX_TEXT])
+    return URL_CREDENTIALS.sub(r"\1***REDACTED***\2", redacted)
 
 
 def _load(name: str, default: Any) -> Any:

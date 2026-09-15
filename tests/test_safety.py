@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -12,11 +13,29 @@ from src.safety import (
     record_audit_event,
     request_authorization,
 )
-from src.files import set_web_file_mode, write_file_content
+from src.files import set_web_file_mode, view_file_content, write_file_content
 from src.recover import run_recovery_action
 
 
 class TestSafetyGate(unittest.TestCase):
+    def test_file_view_redacts_common_secret_assignments(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".conf", dir=os.getcwd(), delete=False, encoding="utf-8") as file:
+            file.write("DB_PASSWORD=super-secret\napi_key: another-secret\nplain=value\n")
+            path = file.name
+        try:
+            result = view_file_content(path)
+        finally:
+            os.remove(path)
+        self.assertEqual(result["status"], "ok")
+        self.assertNotIn("super-secret", result["content"])
+        self.assertNotIn("another-secret", result["content"])
+        self.assertEqual(result["redacted_fields"], 2)
+
+    def test_file_write_rejects_excessive_content_before_authorization(self):
+        result = write_file_content("/var/www/oversized.txt", "x" * (2 * 1024 * 1024 + 1))
+        self.assertEqual(result["status"], "error")
+        self.assertIn("2 MiB", result["error"])
+
     def test_read_only_mode_blocks_state_changes(self):
         with patch.dict(os.environ, {"VPS_GUARDIAN_MODE": "read-only"}):
             result = request_authorization(
