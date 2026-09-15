@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.16.0] - 2026-09-15
+
+### Added
+- **Agent Sessions & Live Server Events (`src/agent_runtime.py`)**:
+  - Added expiring shared sessions with findings, handoffs, outcomes, and workload locks so
+    multiple agents can safely continue the same VPS task.
+  - Added a compact event timeline that combines VPS-Guardian audit activity with important
+    journal messages, plus expiring workload watches that can be resumed by a later tool call.
+
+### Safety
+- Session notes are capped and redact common secret assignments. Session, lock, and watch state is
+  stored locally with restrictive file permissions and automatic expiry; event watches never claim
+  to deliver push notifications.
+
+---
+
 ## [0.15.0] - 2026-09-14
 
 ### Added

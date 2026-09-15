@@ -140,6 +140,18 @@ try:
         get_workload_health as _get_workload_health,
         prepare_repair_plan as _prepare_repair_plan,
     )
+    from src.agent_runtime import (
+        close_agent_session as _close_agent_session,
+        get_agent_session as _get_agent_session,
+        get_event_watch as _get_event_watch,
+        get_recent_server_events as _get_recent_server_events,
+        handoff_agent_session as _handoff_agent_session,
+        list_agent_sessions as _list_agent_sessions,
+        lock_workload as _lock_workload,
+        open_event_watch as _open_event_watch,
+        record_session_finding as _record_session_finding,
+        start_agent_session as _start_agent_session,
+    )
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -243,6 +255,18 @@ except ImportError:
         get_vps_topology as _get_vps_topology,
         get_workload_health as _get_workload_health,
         prepare_repair_plan as _prepare_repair_plan,
+    )
+    from agent_runtime import (
+        close_agent_session as _close_agent_session,
+        get_agent_session as _get_agent_session,
+        get_event_watch as _get_event_watch,
+        get_recent_server_events as _get_recent_server_events,
+        handoff_agent_session as _handoff_agent_session,
+        list_agent_sessions as _list_agent_sessions,
+        lock_workload as _lock_workload,
+        open_event_watch as _open_event_watch,
+        record_session_finding as _record_session_finding,
+        start_agent_session as _start_agent_session,
     )
 
 # Initialize FastMCP Server
@@ -667,6 +691,70 @@ def compare_workload_baseline(baseline_id: str) -> str:
     except Exception as exc:
         logger.error(f"Error in compare_workload_baseline: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+# ============================================================================
+# 2b. Agent Sessions & Live Server Events
+# ============================================================================
+
+@mcp.tool()
+def start_agent_session(title: str, target: Optional[str] = None, ttl_minutes: int = 240) -> str:
+    """Create an expiring, secret-safe shared task context for agents working on this VPS."""
+    return json.dumps(_start_agent_session(title, target, ttl_minutes), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_agent_session(session_id: str) -> str:
+    """Read a session's objective, findings, handoff note, and expiry state."""
+    return json.dumps(_get_agent_session(session_id), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def list_agent_sessions(include_closed: bool = False) -> str:
+    """List active shared agent sessions; expired sessions are marked automatically."""
+    return json.dumps(_list_agent_sessions(include_closed), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def record_session_finding(session_id: str, summary: str, kind: str = "finding") -> str:
+    """Save one bounded, secret-redacted finding or decision to an active agent session."""
+    return json.dumps(_record_session_finding(session_id, summary, kind), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def handoff_agent_session(session_id: str, next_agent: str, summary: str) -> str:
+    """Leave a concise handoff note so another agent can continue without rediscovery."""
+    return json.dumps(_handoff_agent_session(session_id, next_agent, summary), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def close_agent_session(session_id: str, outcome: str) -> str:
+    """Close a session with an outcome; historical records remain secret-redacted."""
+    return json.dumps(_close_agent_session(session_id, outcome), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def lock_workload(session_id: str, target: str, ttl_minutes: int = 30) -> str:
+    """Reserve a workload briefly so concurrent agents do not make conflicting changes."""
+    return json.dumps(_lock_workload(session_id, target, ttl_minutes), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_recent_server_events(since_minutes: int = 30, limit: int = 50, target: Optional[str] = None) -> str:
+    """Return a compact timeline of Guardian actions and important journal events."""
+    return json.dumps(_get_recent_server_events(since_minutes, limit, target), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def open_event_watch(target: str, session_id: Optional[str] = None, ttl_minutes: int = 60) -> str:
+    """Open an expiring workload watch. Use get_event_watch later to retrieve new events."""
+    return json.dumps(_open_event_watch(target, session_id, ttl_minutes), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_event_watch(watch_id: str, limit: int = 50) -> str:
+    """Retrieve events seen since an active event watch was opened; this does not push notifications."""
+    return json.dumps(_get_event_watch(watch_id, limit), indent=2, ensure_ascii=False)
 
 
 # ============================================================================
