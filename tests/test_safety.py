@@ -23,7 +23,11 @@ class TestSafetyGate(unittest.TestCase):
             file.write("DB_PASSWORD=super-secret\napi_key: another-secret\nplain=value\n")
             path = file.name
         try:
-            result = view_file_content(path)
+            # The production allow-list intentionally excludes the repository
+            # on Linux.  Permit this test fixture only for the duration of
+            # this unit test, without weakening the runtime policy.
+            with patch("src.files.get_allowed_directories", return_value=[os.getcwd()]):
+                result = view_file_content(path)
         finally:
             os.remove(path)
         self.assertEqual(result["status"], "ok")
