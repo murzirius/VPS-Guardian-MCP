@@ -1,10 +1,20 @@
 {
-  "name": "vps-guardian-mcp",
-  "version": "0.18.0",
-  "description": "Secure Model Context Protocol (MCP) server for remote Linux VPS observability, Docker management, and recovery.",
+  "name": "@murzirius/vps-guardian-mcp",
+  "version": "0.19.0",
+  "description": "Secure SSH client launcher for the VPS-Guardian-MCP server.",
+  "mcpName": "io.github.murzirius/vps-guardian-mcp",
   "main": "bin/vps-guardian.js",
   "bin": {
     "vps-guardian-mcp": "./bin/vps-guardian.js"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --check bin/vps-guardian.js",
+    "prepublishOnly": "npm test"
   },
   "keywords": [
     "mcp",
@@ -29,6 +39,9 @@
     "url": "https://github.com/murzirius/VPS-Guardian-MCP/issues"
   },
   "homepage": "https://github.com/murzirius/VPS-Guardian-MCP#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=16.0.0"
   },

@@ -32,3 +32,12 @@ jobs:
         run: python -m coverage report
       - name: Verify installed dependencies
         run: python -m pip check
+      - name: Build and validate PyPI distributions
+        run: |
+          python -m build
+          python -m twine check dist/*
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Validate npm launcher
+        run: npm test

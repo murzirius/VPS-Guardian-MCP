@@ -15,14 +15,16 @@ function printHelp() {
 VPS-Guardian-MCP Runner (npx wrapper)
 
 USAGE:
-  npx -y vps-guardian-mcp --host <IP_OR_HOSTNAME> [OPTIONS]
-  npx -y vps-guardian-mcp [user@]<host> [OPTIONS]
+  npx -y @murzirius/vps-guardian-mcp --host <IP_OR_HOSTNAME> [OPTIONS]
+  npx -y @murzirius/vps-guardian-mcp [user@]<host> [OPTIONS]
 
 OPTIONS:
   -H, --host <host>          VPS IP address or hostname (Required)
   -u, --user <username>      SSH user (Default: root)
   -i, --key <identity_file>  Path to private SSH key (e.g. ~/.ssh/id_ed25519)
   -p, --port <port>          SSH port (Default: 22)
+  --known-hosts <path>       Known-hosts file to verify the VPS host key
+  --accept-new-host-key      Accept a new host key once (bootstrap only; less secure)
   --remote-path <path>       Path to binary on VPS (Default: /opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp)
   --mode <mode>              Safety mode: read-only, controlled, unrestricted (Default: read-only)
   -h, --help                 Show this help message
@@ -34,13 +36,13 @@ EXAMPLES:
     "mcpServers": {
       "vps-guardian": {
         "command": "npx",
-        "args": ["-y", "vps-guardian-mcp", "--host", "65.75.200.108", "--mode", "controlled", "-i", "~/.ssh/id_ed25519"]
+        "args": ["-y", "@murzirius/vps-guardian-mcp", "--host", "<VPS_IP_OR_HOSTNAME>", "--mode", "controlled", "-i", "~/.ssh/id_ed25519"]
       }
     }
   }
 
   # In Claude Code CLI:
-  claude mcp add vps-guardian -- npx -y vps-guardian-mcp --host 65.75.200.108 --mode controlled -i ~/.ssh/id_ed25519
+  claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp --host <VPS_IP_OR_HOSTNAME> --mode controlled -i ~/.ssh/id_ed25519
 \n`);
 }
 
@@ -50,6 +52,8 @@ function parseArgs() {
   let user = "root";
   let key = "";
   let port = 22;
+  let knownHosts = "";
+  let acceptNewHostKey = false;
   let remotePath = "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp";
   let mode = "read-only";
 
@@ -66,7 +70,7 @@ function parseArgs() {
         const pkg = require("../package.json");
         process.stderr.write(`vps-guardian-mcp v${pkg.version}\n`);
       } catch {
-        process.stderr.write("vps-guardian-mcp v0.18.0\n");
+        process.stderr.write("vps-guardian-mcp v0.19.0\n");
       }
       process.exit(0);
     }
@@ -79,6 +83,10 @@ function parseArgs() {
       key = args[++i];
     } else if ((arg === "-p" || arg === "--port") && i + 1 < args.length) {
       port = parseInt(args[++i], 10) || 22;
+    } else if (arg === "--known-hosts" && i + 1 < args.length) {
+      knownHosts = args[++i];
+    } else if (arg === "--accept-new-host-key") {
+      acceptNewHostKey = true;
     } else if (arg === "--remote-path" && i + 1 < args.length) {
       remotePath = args[++i];
     } else if (arg === "--mode" && i + 1 < args.length) {
@@ -101,11 +109,11 @@ function parseArgs() {
     process.exit(1);
   }
 
-  return { host, user, key, port, remotePath, mode };
+  return { host, user, key, port, knownHosts, acceptNewHostKey, remotePath, mode };
 }
 
 function main() {
-  const { host, user, key, port, remotePath, mode } = parseArgs();
+  const { host, user, key, port, knownHosts, acceptNewHostKey, remotePath, mode } = parseArgs();
 
   if (!host) {
     process.stderr.write("Error: Missing required argument '--host <IP>'.\n");
@@ -116,7 +124,7 @@ function main() {
   const sshArgs = [
     "-q",
     "-o", "LogLevel=ERROR",
-    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", `StrictHostKeyChecking=${acceptNewHostKey ? "accept-new" : "yes"}`,
     "-o", "ServerAliveInterval=15",
     "-o", "ServerAliveCountMax=4",
     "-o", "TCPKeepAlive=yes",
@@ -131,6 +139,15 @@ function main() {
       expandedKey = path.join(home, expandedKey.slice(1));
     }
     sshArgs.push("-i", expandedKey);
+  }
+
+  if (knownHosts) {
+    let expandedKnownHosts = knownHosts;
+    if (expandedKnownHosts.startsWith("~")) {
+      const home = process.env.HOME || process.env.USERPROFILE || "";
+      expandedKnownHosts = path.join(home, expandedKnownHosts.slice(1));
+    }
+    sshArgs.push("-o", `UserKnownHostsFile=${expandedKnownHosts}`);
   }
 
   if (port && port !== 22) {

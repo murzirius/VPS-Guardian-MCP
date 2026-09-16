@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vps-guardian-mcp"
-version = "0.18.0"
-description = "A secure Model Context Protocol (MCP) server for Linux VPS monitoring, Docker status checks, and isolated recovery commands."
+version = "0.19.0"
+description = "Secure MCP server for Linux VPS observability, guarded administration, and AI-agent collaboration."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
     { name = "murzirius" }
 ]
-urls = { Homepage = "https://github.com/murzirius/VPS-Guardian-MCP", Repository = "https://github.com/murzirius/VPS-Guardian-MCP", Issues = "https://github.com/murzirius/VPS-Guardian-MCP/issues" }
+urls = { Homepage = "https://thomas-studios.com/projects/vps-guardian-mcp", Documentation = "https://github.com/murzirius/VPS-Guardian-MCP#readme", Repository = "https://github.com/murzirius/VPS-Guardian-MCP", Changelog = "https://github.com/murzirius/VPS-Guardian-MCP/blob/main/UPDATES.md", Issues = "https://github.com/murzirius/VPS-Guardian-MCP/issues" }
 keywords = ["mcp", "model-context-protocol", "vps", "linux", "monitoring", "docker", "ai-agent"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -36,8 +36,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "build>=1.2",
     "coverage[toml]>=7.6",
     "ruff>=0.8",
+    "twine>=6.1",
 ]
 
 [project.scripts]

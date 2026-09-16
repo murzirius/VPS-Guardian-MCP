@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [Unreleased]
+
+### Security & Distribution
+- Hardened the local SSH launcher: verified host keys are now required by default; a separate
+  known-hosts file is supported, while accepting a new host key is an explicit bootstrap choice.
+- Prepared public package metadata: a scoped npm launcher, MCP namespace ownership metadata,
+  PyPI build metadata, and CI checks for npm and PyPI package artifacts.
+- Updated installation documentation, removed a real VPS address from examples, and clarified the
+  separate VPS-server and local-launcher installation paths.
+
+---
+
 ## [0.18.0] - 2026-09-16
 
 ### Added

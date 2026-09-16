@@ -3,22 +3,26 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/murzirius/VPS-Guardian-MCP/actions/workflows/ci.yml/badge.svg)](https://github.com/murzirius/VPS-Guardian-MCP/actions/workflows/ci.yml)
-[![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP%202024--11--05-green.svg)](https://modelcontextprotocol.io/)
+[![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP-green.svg)](https://modelcontextprotocol.io/)
 [![Author: murzirius](https://img.shields.io/badge/Author-murzirius-purple.svg)](https://github.com/murzirius)
 [![Release](https://img.shields.io/github/v/tag/murzirius/VPS-Guardian-MCP?color=blue&label=version)](https://github.com/murzirius/VPS-Guardian-MCP/tags)
 [![Stars](https://img.shields.io/github/stars/murzirius/VPS-Guardian-MCP?style=flat&color=yellow)](https://github.com/murzirius/VPS-Guardian-MCP/stargazers)
-[![Tools Count](https://img.shields.io/badge/Tools-51%20Active-brightgreen.svg)](#-tools-reference)
+[![Tools Count](https://img.shields.io/badge/Tools-88%20Active-brightgreen.svg)](#-tools-reference)
 [![Updates](https://img.shields.io/badge/Changelog-UPDATES.md-informational.svg)](UPDATES.md)
 
 A secure, open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server designed for remote Linux VPS observability, Docker management, configuration editing with automated backups, network security audits, storage diagnostics, scheduled task inspection, OS patch auditing, kernel crash investigations, outbound network latency benchmarks, database health checks, and isolated emergency recovery.
+
+<!-- mcp-name: io.github.murzirius/vps-guardian-mcp -->
 
 It gives AI agents (Google Antigravity 2.0, Claude Code, Cursor, OpenAI Codex, and Windsurf) **named, structured VPS capabilities** instead of an unrestricted “run this shell command and paste the output” workflow. The agent calls tools such as `get_system_health`, `inspect_compose_project`, or `plan_config_deployment`; the server validates inputs, limits writable paths, and enforces confirmations for changes.
 
 ---
 
-## 🚀 Connect an AI Agent to Your VPS
+## 🚀 Install and Connect an AI Agent
 
-Use this section first. It covers the normal setup, the Codex Desktop form, alternative SSH arrangements, verification, and upgrades. The detailed tool catalogue is further down.
+VPS-Guardian has two deliberately separate parts: the **Python MCP server** runs on the VPS, while a small **SSH launcher** runs on the computer where Codex, Claude, or another AI client is installed. The launcher never uploads the private key; it only opens the MCP stdio connection through OpenSSH.
+
+Use this section first. It covers installation on the VPS, connection from an AI client, strict SSH host-key verification, and upgrades. The detailed tool catalogue is further down.
 
 ### What you need
 
@@ -37,6 +41,8 @@ cd /opt/vps-guardian-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
+
+This source-tag route is available now. The project is also prepared for a future PyPI release; after that release, the equivalent production installation will be `pipx install vps-guardian-mcp==X.Y.Z` on the VPS. Do not use that command until the package is actually published.
 
 If the MCP process will not run as `root`, grant only the capabilities it needs:
 
@@ -57,9 +63,11 @@ Log out and back in after changing group membership. The server still degrades s
 
 For most users, start with `read-only`, verify the connection, then choose `controlled` when you need assisted repairs.
 
-### 3. Recommended connection: `npx` over SSH
+### 3. Connect from your AI client over SSH
 
-The local `npx` runner keeps MCP's stdio transport clean and opens SSH to the binary installed on the VPS. Pin a release tag so an unexpected upstream change never alters the agent's available behavior.
+The local launcher keeps MCP's stdio transport clean and opens SSH to the binary installed on the VPS. It now requires an existing verified SSH host key by default. Before adding the MCP, independently verify the VPS fingerprint and establish a normal SSH connection once; OpenSSH will store it in `~/.ssh/known_hosts` (or `%USERPROFILE%\\.ssh\\known_hosts` on Windows).
+
+The version-pinned GitHub route below is available now. A scoped npm launcher is prepared as `@murzirius/vps-guardian-mcp`; after its first npm release, replace the `github:...` item with `@murzirius/vps-guardian-mcp@X.Y.Z`.
 
 ```json
 {
@@ -109,6 +117,8 @@ controlled
 ```
 
 Save the server, restart Codex Desktop, and use `/mcp` to confirm that `vps-guardian` is connected. Codex Desktop, the Codex CLI, and the IDE extension share the same MCP configuration on a host. [OpenAI Docs](https://learn.chatgpt.com/es-419/docs/extend/mcp)
+
+If SSH reports `Host key verification failed`, do not bypass it. Verify the fingerprint with your hosting provider or another trusted channel, then update the known-hosts entry. The launcher supports `--known-hosts <path>` when a separate known-hosts file is required. `--accept-new-host-key` exists only for a consciously chosen first-time bootstrap and should not be used for a sensitive production VPS.
 
 ### 5. Other common client situations
 
@@ -160,7 +170,7 @@ Use this only when the client can launch `ssh` directly. It bypasses the conveni
       "args": [
         "-q",
         "-i", "~/.ssh/id_ed25519",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "StrictHostKeyChecking=yes",
         "-o", "ServerAliveInterval=15",
         "-o", "ServerAliveCountMax=4",
         "root@<VPS_IP_OR_HOSTNAME>",
@@ -200,7 +210,7 @@ Update **both ends** to the same release:
    .venv/bin/pip install -e .
    ```
 
-2. In the client MCP configuration, replace `#v0.14.1` with `#vX.Y.Z`, save, and restart the client. If you pinned a release, do not use `#main` unless you intentionally want unreleased changes.
+2. In the client MCP configuration, replace `#v0.18.0` with `#vX.Y.Z`, save, and restart the client. If you pinned a release, do not use `#main` unless you intentionally want unreleased changes.
 
 The running agent process is recreated when the MCP client reconnects, so no separate daemon restart is needed for the default SSH setup.
 
@@ -404,7 +414,7 @@ VPS-Guardian-MCP/
 
 ## 🔧 Direct OpenSSH Appendix
 
-The `npx` configuration above is the recommended, version-pinned route. Use these examples only when a client cannot run the local `npx` wrapper. Add `env VPS_GUARDIAN_MODE=controlled` before the remote binary when you need controlled changes; otherwise the server starts in `read-only` mode.
+The launcher configuration above is the recommended, version-pinned route. Use these examples only when a client cannot run the local `npx` wrapper. All examples require a previously verified host key (`StrictHostKeyChecking=yes`); make a normal verified SSH connection first, or provide a separate trusted known-hosts file with `-o UserKnownHostsFile=<path>`. Add `env VPS_GUARDIAN_MODE=controlled` before the remote binary when you need controlled changes; otherwise the server starts in `read-only` mode.
 
 ### 1. 🚀 Google Antigravity 2.0 / Antigravity IDE
 Add to your global or workspace configuration in `~/.gemini/config/mcp_config.json`:
@@ -418,7 +428,7 @@ Add to your global or workspace configuration in `~/.gemini/config/mcp_config.js
         "-q",
         "-i", "C:/Users/<Username>/.ssh/id_ed25519",
         "-o", "LogLevel=ERROR",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "StrictHostKeyChecking=yes",
         "-o", "ServerAliveInterval=15",
         "-o", "ServerAliveCountMax=4",
         "-o", "TCPKeepAlive=yes",
@@ -435,7 +445,7 @@ Add to your global or workspace configuration in `~/.gemini/config/mcp_config.js
 Add the server with a single terminal command:
 
 ```bash
-claude mcp add vps-guardian -- ssh -q -i ~/.ssh/id_ed25519 -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes root@<YOUR_VPS_IP> /opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp
+claude mcp add vps-guardian -- ssh -q -i ~/.ssh/id_ed25519 -o LogLevel=ERROR -o StrictHostKeyChecking=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes root@<YOUR_VPS_IP> /opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp
 ```
 
 ### 3. 💻 Cursor IDE
@@ -450,7 +460,7 @@ Add to your project or user configuration in `.cursor/mcp.json`:
         "-q",
         "-i", "~/.ssh/id_ed25519",
         "-o", "LogLevel=ERROR",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "StrictHostKeyChecking=yes",
         "-o", "ServerAliveInterval=15",
         "-o", "ServerAliveCountMax=4",
         "-o", "TCPKeepAlive=yes",
@@ -473,7 +483,7 @@ Configure in your local MCP configuration file:
       "args": [
         "-q",
         "-i", "~/.ssh/id_ed25519",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "StrictHostKeyChecking=yes",
         "-o", "ServerAliveInterval=15",
         "-o", "ServerAliveCountMax=4",
         "root@<YOUR_VPS_IP>",
@@ -495,7 +505,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
       "args": [
         "-q",
         "-i", "~/.ssh/id_ed25519",
-        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "StrictHostKeyChecking=yes",
         "-o", "ServerAliveInterval=15",
         "-o", "ServerAliveCountMax=4",
         "root@<YOUR_VPS_IP>",
