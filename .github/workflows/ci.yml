@@ -11,6 +11,11 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      VPS_GUARDIAN_AUDIT_LOG: ${{ runner.temp }}/vps-guardian/audit.jsonl
+      VPS_GUARDIAN_STATE_DIR: ${{ runner.temp }}/vps-guardian/state
+      VPS_GUARDIAN_SNAPSHOT_DIR: ${{ runner.temp }}/vps-guardian/snapshots
+      VPS_GUARDIAN_WORKLOAD_BASELINE_DIR: ${{ runner.temp }}/vps-guardian/workloads
     strategy:
       fail-fast: false
       matrix:
