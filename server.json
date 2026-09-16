@@ -1,0 +1,31 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.murzirius/vps-guardian-mcp",
+  "title": "VPS Guardian",
+  "description": "Secure SSH bridge for AI agents to observe and safely administer Linux VPSs.",
+  "repository": {
+    "url": "https://github.com/murzirius/VPS-Guardian-MCP",
+    "source": "github"
+  },
+  "version": "0.19.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@murzirius/vps-guardian-mcp",
+      "version": "0.19.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "pypi",
+      "identifier": "vps-guardian-mcp",
+      "version": "0.19.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

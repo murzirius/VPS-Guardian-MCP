@@ -32,6 +32,18 @@ class TestReleaseMetadata(unittest.TestCase):
         self.assertIsNotNone(documented_match)
         self.assertEqual(actual_count, int(documented_match.group(1)))
 
+    def test_registry_metadata_matches_package_metadata(self):
+        registry = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+        package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(registry["name"], package["mcpName"])
+        self.assertEqual(registry["version"], __version__)
+        self.assertEqual(package["version"], __version__)
+        self.assertEqual(
+            {item["identifier"] for item in registry["packages"]},
+            {"@murzirius/vps-guardian-mcp", "vps-guardian-mcp"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

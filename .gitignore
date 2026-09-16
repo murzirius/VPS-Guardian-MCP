@@ -60,4 +60,5 @@ htmlcov/
 
 # Local npm diagnostics and neighbouring user workspace
 .npm-cache/
+.release-tools/
 /weppy-project-sync/
