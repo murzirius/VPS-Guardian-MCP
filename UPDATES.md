@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [Unreleased]
 
 ### Security & Distribution
+- Replaced the npm publishing secret with npm Trusted Publishing via GitHub Actions OIDC.
+  Release credentials are short-lived and workflow-bound; no long-lived npm write token is used.
+- Corrected npm package metadata and upgraded the release runtime to Node.js 24 for OIDC support.
 - Hardened the local SSH launcher: verified host keys are now required by default; a separate
   known-hosts file is supported, while accepting a new host key is an explicit bootstrap choice.
 - Prepared public package metadata: a scoped npm launcher, MCP namespace ownership metadata,

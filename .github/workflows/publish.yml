@@ -20,10 +20,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          # npm Trusted Publishing requires Node 22.14+ and npm 11.5+.
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
       - name: Verify release versions
         shell: bash
         run: |
@@ -50,10 +52,10 @@ jobs:
           python -m pip install --upgrade pip build twine
           python -m build
           python -m twine check dist/*
-      - name: Publish npm package with provenance
-        run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish npm package through trusted publishing
+        # OIDC credentials and provenance are issued by npm for this GitHub
+        # Actions workflow. No long-lived NPM_TOKEN is used.
+        run: npm publish --access public
       - name: Publish PyPI package through trusted publishing
         uses: pypa/gh-action-pypi-publish@release/v1
       - name: Install MCP Registry publisher

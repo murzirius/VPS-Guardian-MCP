@@ -1,11 +1,11 @@
 {
   "name": "@murzirius/vps-guardian-mcp",
-  "version": "0.19.0",
+  "version": "0.19.1",
   "description": "Secure SSH client launcher for the VPS-Guardian-MCP server.",
   "mcpName": "io.github.murzirius/vps-guardian-mcp",
   "main": "bin/vps-guardian.js",
   "bin": {
-    "vps-guardian-mcp": "./bin/vps-guardian.js"
+    "vps-guardian-mcp": "bin/vps-guardian.js"
   },
   "files": [
     "bin",
@@ -33,7 +33,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/murzirius/VPS-Guardian-MCP.git"
+    "url": "git+https://github.com/murzirius/VPS-Guardian-MCP.git"
   },
   "bugs": {
     "url": "https://github.com/murzirius/VPS-Guardian-MCP/issues"

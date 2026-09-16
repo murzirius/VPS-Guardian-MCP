@@ -220,11 +220,11 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.19.0` (unreleased; see [UPDATES.md](UPDATES.md)) |
+| **Version** | `0.19.1` (unreleased; see [UPDATES.md](UPDATES.md)) |
 | **Active MCP Tools** | **60 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
-| **Release Status** | [v0.18.0 is the current published release](https://github.com/murzirius/VPS-Guardian-MCP/releases); `0.19.0` is prepared for release / Open Source (MIT) |
+| **Release Status** | [v0.18.0 is the current GitHub release](https://github.com/murzirius/VPS-Guardian-MCP/releases); `0.19.1` is prepared for release / Open Source (MIT) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux with APT, DNF/YUM, Pacman, or Zypper; UFW, firewalld, or nftables; systemd, OpenRC, or SysVinit |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -381,7 +381,7 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.19.0)
+│   ├── __init__.py          # Package version (v0.19.1)
 │   ├── server.py            # FastMCP server, resources, prompts, and tool registry (51 tools)
 │   ├── safety.py            # Confirmation tokens, execution modes, and audit log
 │   ├── incident.py          # Unified severity-ranked incident report
