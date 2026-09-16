@@ -1,0 +1,37 @@
+name: Publish MCP Registry metadata
+
+on:
+  push:
+    tags: ["registry-v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish-registry:
+    name: Publish MCP Registry metadata
+    runs-on: ubuntu-latest
+    environment: release-publish
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install MCP Registry publisher
+        shell: bash
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+      - name: Validate and publish MCP Registry metadata
+        shell: bash
+        run: |
+          ./mcp-publisher validate server.json
+          ./mcp-publisher login github-oidc
+          for attempt in 1 2 3 4 5 6; do
+            if ./mcp-publisher publish server.json; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 6 ]; then
+              exit 1
+            fi
+            echo "Registry has not indexed the package yet; retrying in 30 seconds."
+            sleep 30
+          done
