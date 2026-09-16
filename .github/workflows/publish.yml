@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  packages: write
 
 jobs:
   publish:
@@ -56,6 +57,16 @@ jobs:
         # OIDC credentials and provenance are issued by npm for this GitHub
         # Actions workflow. No long-lived NPM_TOKEN is used.
         run: npm publish --access public
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@murzirius"
+          package-manager-cache: false
+      - name: Publish GitHub Packages mirror
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish PyPI package through trusted publishing
         uses: pypa/gh-action-pypi-publish@release/v1
       - name: Install MCP Registry publisher
