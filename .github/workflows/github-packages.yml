@@ -1,0 +1,37 @@
+name: Publish GitHub Packages mirror
+
+on:
+  push:
+    tags: ["github-packages-v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-github-package:
+    name: Publish GitHub Packages mirror
+    runs-on: ubuntu-latest
+    environment: release-publish
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@murzirius"
+          package-manager-cache: false
+      - name: Verify mirror version
+        shell: bash
+        run: |
+          expected="${GITHUB_REF_NAME#github-packages-v}"
+          actual="$(node -p "require('./package.json').version")"
+          test "$actual" = "$expected"
+      - name: Test and package launcher
+        run: |
+          npm test
+          npm pack --dry-run
+      - name: Publish GitHub Packages mirror
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
