@@ -68,7 +68,7 @@ The local `npx` runner keeps MCP's stdio transport clean and opens SSH to the bi
       "command": "npx",
       "args": [
         "-y",
-        "github:murzirius/VPS-Guardian-MCP#v0.17.0",
+        "github:murzirius/VPS-Guardian-MCP#v0.18.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -97,7 +97,7 @@ Arguments, one per row:
 
 ```text
 -y
-github:murzirius/VPS-Guardian-MCP#v0.17.0
+github:murzirius/VPS-Guardian-MCP#v0.18.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -119,7 +119,7 @@ Use the JSON from step 3 in that client's MCP server configuration. Keep the arg
 #### Claude Code
 
 ```bash
-claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.17.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
+claude mcp add vps-guardian -- npx -y github:murzirius/VPS-Guardian-MCP#v0.18.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
 ```
 
 #### The SSH user is not `root`
@@ -210,11 +210,11 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 
 | Metric | Details |
 | :--- | :--- |
-| **Version** | `0.17.0` (See [UPDATES.md](UPDATES.md)) |
+| **Version** | `0.18.0` (See [UPDATES.md](UPDATES.md)) |
 | **Active MCP Tools** | **60 tools** |
 | **MCP Resources** | `vps://system-overview`, `vps://security-dashboard`, `vps://docker-overview` |
 | **MCP Prompts** | `triage_server_incident`, `emergency_disk_cleanup`, `security_and_update_audit`, `troubleshoot_application_crash` |
-| **Release Status** | [v0.17.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
+| **Release Status** | [v0.18.0 on GitHub](https://github.com/murzirius/VPS-Guardian-MCP/releases) / Open Source (MIT) |
 | **Architecture** | Python 3.10+, FastMCP, Stdio JSON-RPC Transport |
 | **Supported Platforms** | Linux with APT, DNF/YUM, Pacman, or Zypper; UFW, firewalld, or nftables; systemd, OpenRC, or SysVinit |
 | **Security Standards** | 100% Shell-less execution (`shell=False`), directory whitelisting, atomic file swaps |
@@ -267,6 +267,10 @@ The running agent process is recreated when the MCP client reconnects, so no sep
 ### ChangeSets & Low-Resource Runtime
 - **ChangeSets**: Stage up to three bounded Nginx configuration files, review secret-redacted diffs, confirm once, then validate, reload, health-check, and roll back together on failure.
 - **`get_runtime_budget`**: Shows the adaptive limits used on constrained hosts; Guardian stays on-demand and never launches background polling workers.
+
+### Remote Project Workspace (`src/project_workspace.py`)
+- **Project discovery and inspection**: Finds bounded Git/application projects, detects stack markers, and shows Git state without exposing arbitrary filesystem paths.
+- **Source work without a shell**: Lets agents search/read redacted code, stage a short-lived patch, review a diff, apply it with a backup and confirmation, then run fixed safe checks.
 
 ### 6. 🔒 Security Auditing & Intrusion Detection (`src/security.py`)
 - **`check_failed_logins`**: Analyzes recent failed SSH authentications to surface brute-force attackers and repeat offending IP addresses.
@@ -367,7 +371,7 @@ When interacting with a host via VPS-Guardian-MCP, AI agents must adhere to the 
 ```text
 VPS-Guardian-MCP/
 ├── src/
-│   ├── __init__.py          # Package version (v0.17.0)
+│   ├── __init__.py          # Package version (v0.18.0)
 │   ├── server.py            # FastMCP server, resources, prompts, and tool registry (51 tools)
 │   ├── safety.py            # Confirmation tokens, execution modes, and audit log
 │   ├── incident.py          # Unified severity-ranked incident report
@@ -504,7 +508,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ---
 
-## 🛠️ Tools Reference (78 Active Tools)
+## 🛠️ Tools Reference (88 Active Tools)
 
 | Tool Name | Parameters | Description |
 | :--- | :--- | :--- |
@@ -548,6 +552,16 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `preview_change_set` | `change_set_id` | Shows secret-redacted diffs and prepares one confirmation |
 | `apply_change_set` | `change_set_id`, `confirmation_token` | Validates, reloads, health-checks, and rolls back a ChangeSet |
 | `get_runtime_budget` | *none* | Shows low-resource profile and active operation limits |
+| `discover_projects` | `root_path`, `max_depth` | Finds approved application projects and stack markers |
+| `inspect_project` | `project_path` | Shows stack, Git commit, branch, and working-tree state |
+| `search_project_code` | `project_path`, `query`, `max_matches` | Performs bounded literal code search with redaction |
+| `read_project_file` | `project_path`, `relative_path`, `max_bytes` | Reads one project file without following symlinks |
+| `begin_project_patch` | `project_path`, `title` | Opens a short-lived bounded source patch |
+| `stage_project_file_change` | `patch_id`, `relative_path`, `content` | Stages a source-file replacement without writing it |
+| `preview_project_patch` | `patch_id` | Shows redacted diff and prepares one confirmation |
+| `apply_project_patch` | `patch_id`, `confirmation_token` | Applies a confirmed source patch with backups, never executing it |
+| `get_project_changes` | `project_path` | Returns Git working-tree change summary and diff stats |
+| `run_project_checks` | `project_path`, `check` | Runs fixed Git whitespace or bounded Python syntax checks |
 | `get_open_ports` | *none* | Discovers all listening ports (TCP/UDP, IPv4/IPv6) with process names and PIDs |
 | `get_ufw_status` | *none* | Audits UFW firewall state, default traffic policies, and active rules |
 | `get_platform_capabilities` | *none* | Detects cross-distro management backends |

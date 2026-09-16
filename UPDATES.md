@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.18.0] - 2026-09-16
+
+### Added
+- **Remote Project Workspace (`src/project_workspace.py`)**:
+  - Added bounded discovery, inspection, literal search, and secret-redacted file reads for
+    application projects in configured roots.
+  - Added short-lived source patches with diff preview, exact confirmation, backups, and
+    conflict/symlink checks before applying changes.
+  - Added safe project checks limited to Git whitespace validation and bounded Python AST syntax
+    parsing; project code is never executed by these tools.
+
+### Safety
+- Project roots default to `/var/www`, `/opt`, and `/srv` (or can be explicitly set through
+  `VPS_GUARDIAN_PROJECT_ROOTS`); dependency folders, symlinks, large files, and arbitrary commands
+  are excluded.
+
+---
+
 ## [0.17.0] - 2026-09-15
 
 ### Added

@@ -159,6 +159,18 @@ try:
         stage_file_change as _stage_file_change,
     )
     from src.resource_policy import get_runtime_budget as _get_runtime_budget
+    from src.project_workspace import (
+        begin_project_patch as _begin_project_patch,
+        discover_projects as _discover_projects,
+        get_project_changes as _get_project_changes,
+        inspect_project as _inspect_project,
+        preview_project_patch as _preview_project_patch,
+        read_project_file as _read_project_file,
+        run_project_checks as _run_project_checks,
+        search_project_code as _search_project_code,
+        stage_project_file_change as _stage_project_file_change,
+        apply_project_patch as _apply_project_patch,
+    )
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -282,6 +294,18 @@ except ImportError:
         stage_file_change as _stage_file_change,
     )
     from resource_policy import get_runtime_budget as _get_runtime_budget
+    from project_workspace import (
+        begin_project_patch as _begin_project_patch,
+        discover_projects as _discover_projects,
+        get_project_changes as _get_project_changes,
+        inspect_project as _inspect_project,
+        preview_project_patch as _preview_project_patch,
+        read_project_file as _read_project_file,
+        run_project_checks as _run_project_checks,
+        search_project_code as _search_project_code,
+        stage_project_file_change as _stage_project_file_change,
+        apply_project_patch as _apply_project_patch,
+    )
 
 # Initialize FastMCP Server
 mcp = FastMCP(
@@ -799,6 +823,66 @@ def apply_change_set(change_set_id: str, confirmation_token: Optional[str] = Non
 def get_runtime_budget() -> str:
     """Show the active low-resource profile and limits VPS-Guardian applies on this host."""
     return json.dumps(_get_runtime_budget(), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def discover_projects(root_path: Optional[str] = None, max_depth: int = 3) -> str:
+    """Find bounded Git/application projects in configured VPS project roots."""
+    return json.dumps(_discover_projects(root_path, max_depth), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def inspect_project(project_path: str) -> str:
+    """Inspect an approved project: stack markers, Git branch/commit, and dirty state."""
+    return json.dumps(_inspect_project(project_path), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def search_project_code(project_path: str, query: str, max_matches: int = 50) -> str:
+    """Bounded literal code search with ignored dependency folders and redacted output."""
+    return json.dumps(_search_project_code(project_path, query, max_matches), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def read_project_file(project_path: str, relative_path: str, max_bytes: int = 50000) -> str:
+    """Read one non-binary project file without following symlinks; redact common secrets."""
+    return json.dumps(_read_project_file(project_path, relative_path, max_bytes), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def begin_project_patch(project_path: str, title: str) -> str:
+    """Open a short-lived, bounded source patch; no project code runs."""
+    return json.dumps(_begin_project_patch(project_path, title), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def stage_project_file_change(patch_id: str, relative_path: str, content: str) -> str:
+    """Stage one source-file replacement in an active project patch without applying it."""
+    return json.dumps(_stage_project_file_change(patch_id, relative_path, content), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def preview_project_patch(patch_id: str) -> str:
+    """Show secret-redacted source diff and obtain one confirmation token for a patch."""
+    return json.dumps(_preview_project_patch(patch_id), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def apply_project_patch(patch_id: str, confirmation_token: Optional[str] = None) -> str:
+    """Apply a confirmed bounded source patch with backups; it never executes project code."""
+    return json.dumps(_apply_project_patch(patch_id, confirmation_token), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_project_changes(project_path: str) -> str:
+    """Read Git working-tree changes and diff statistics without modifying the project."""
+    return json.dumps(_get_project_changes(project_path), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def run_project_checks(project_path: str, check: str = "auto") -> str:
+    """Run only fixed safe checks: Git whitespace validation or bounded Python syntax parsing."""
+    return json.dumps(_run_project_checks(project_path, check), indent=2, ensure_ascii=False)
 
 
 # ============================================================================
