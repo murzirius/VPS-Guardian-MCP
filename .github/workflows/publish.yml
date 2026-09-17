@@ -79,4 +79,14 @@ jobs:
         run: |
           ./mcp-publisher validate server.json
           ./mcp-publisher login github-oidc
-          ./mcp-publisher publish server.json
+          for attempt in 1 2 3 4 5 6; do
+            if ./mcp-publisher publish server.json; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 6 ]; then
+              echo "MCP Registry did not index the npm package after six attempts."
+              exit 1
+            fi
+            echo "Registry has not indexed the package yet; retrying in 30 seconds."
+            sleep 30
+          done

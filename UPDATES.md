@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.20.1] - 2026-09-17
+
+### Reliability
+- The release workflow now retries MCP Registry publication for up to three minutes after npm
+  publication, eliminating transient Registry-indexing failures from otherwise successful releases.
+
+---
+
 ## [0.20.0] - 2026-09-17
 
 ### Added
