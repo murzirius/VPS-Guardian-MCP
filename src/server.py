@@ -104,7 +104,9 @@ try:
     )
     from src.recover import (
         create_backup as _create_backup,
+        get_backup_status as _get_backup_status,
         run_recovery_action as _run_recovery_action,
+        verify_backup as _verify_backup,
     )
     from src.incident import generate_incident_report as _generate_incident_report
     from src.safety import (
@@ -159,6 +161,13 @@ try:
         stage_file_change as _stage_file_change,
     )
     from src.resource_policy import get_runtime_budget as _get_runtime_budget
+    from src.operations import (
+        close_maintenance_window as _close_maintenance_window,
+        create_maintenance_window as _create_maintenance_window,
+        get_resource_alerts as _get_resource_alerts,
+        list_maintenance_windows as _list_maintenance_windows,
+        watch_resource_threshold as _watch_resource_threshold,
+    )
     from src.project_workspace import (
         begin_project_patch as _begin_project_patch,
         discover_projects as _discover_projects,
@@ -239,7 +248,9 @@ except ImportError:
     )
     from recover import (
         create_backup as _create_backup,
+        get_backup_status as _get_backup_status,
         run_recovery_action as _run_recovery_action,
+        verify_backup as _verify_backup,
     )
     from incident import generate_incident_report as _generate_incident_report
     from safety import (
@@ -294,6 +305,13 @@ except ImportError:
         stage_file_change as _stage_file_change,
     )
     from resource_policy import get_runtime_budget as _get_runtime_budget
+    from operations import (
+        close_maintenance_window as _close_maintenance_window,
+        create_maintenance_window as _create_maintenance_window,
+        get_resource_alerts as _get_resource_alerts,
+        list_maintenance_windows as _list_maintenance_windows,
+        watch_resource_threshold as _watch_resource_threshold,
+    )
     from project_workspace import (
         begin_project_patch as _begin_project_patch,
         discover_projects as _discover_projects,
@@ -823,6 +841,51 @@ def apply_change_set(change_set_id: str, confirmation_token: Optional[str] = Non
 def get_runtime_budget() -> str:
     """Show the active low-resource profile and limits VPS-Guardian applies on this host."""
     return json.dumps(_get_runtime_budget(), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def create_maintenance_window(
+    title: str,
+    target: Optional[str] = None,
+    starts_in_minutes: int = 0,
+    duration_minutes: int = 60,
+    allowed_actions: Optional[list[str]] = None,
+    session_id: Optional[str] = None,
+) -> str:
+    """Create an expiring maintenance window for agent coordination.
+
+    A window records intent and timing; it never bypasses the active safety
+    mode or grants permission for VPS changes.
+    """
+    return json.dumps(_create_maintenance_window(title, target, starts_in_minutes, duration_minutes, allowed_actions, session_id), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def list_maintenance_windows(include_closed: bool = False) -> str:
+    """List active maintenance windows, or include closed and expired history."""
+    return json.dumps(_list_maintenance_windows(include_closed), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def close_maintenance_window(window_id: str, outcome: str = "") -> str:
+    """Close a maintenance window with a secret-redacted outcome note."""
+    return json.dumps(_close_maintenance_window(window_id, outcome), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def watch_resource_threshold(metric: str, threshold_percent: float, ttl_minutes: int = 60) -> str:
+    """Create an expiring CPU, memory, swap, or disk threshold watch.
+
+    The watch has no background worker. Call get_resource_alerts to evaluate it
+    on demand, which is safe for small VPS instances.
+    """
+    return json.dumps(_watch_resource_threshold(metric, threshold_percent, ttl_minutes), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_resource_alerts(limit: int = 50) -> str:
+    """Evaluate active resource watches once and return current threshold alerts."""
+    return json.dumps(_get_resource_alerts(limit), indent=2, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -1644,6 +1707,22 @@ def create_backup(
     except Exception as exc:
         logger.error(f"Error in create_backup: {exc}", exc_info=True)
         return json.dumps({"status": "error", "error": str(exc)}, indent=2)
+
+
+@mcp.tool()
+def get_backup_status(limit: int = 20) -> str:
+    """List isolated Guardian backups with sizes and creation times, without reading contents."""
+    return json.dumps(_get_backup_status(limit), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def verify_backup(archive_path: str) -> str:
+    """Verify a Guardian tar.gz archive without extracting it.
+
+    Only regular archives within the isolated Guardian backup directory are
+    accepted. Very large member counts return a bounded partial result.
+    """
+    return json.dumps(_verify_backup(archive_path), indent=2, ensure_ascii=False)
 
 
 # ============================================================================

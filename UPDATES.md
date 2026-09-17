@@ -8,6 +8,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+---
+
+## [0.20.0] - 2026-09-17
+
+### Added
+- **Maintenance Windows (`src/operations.py`)**: Added expiring maintenance intent records with
+  target, timing, optional agent-session link, action labels, and a redacted close-out outcome.
+  Windows coordinate agents but never grant permissions or bypass the safety gate.
+- **On-demand Resource Alerts (`src/operations.py`)**: Added expiring CPU, memory, swap, and root
+  disk threshold watches. Alerts are evaluated only when requested; no polling worker is created.
+- **Backup Inspection (`src/recover.py`)**: Added bounded backup status listing and non-extracting
+  tar.gz verification restricted to the isolated Guardian backup directory.
+
+### Reliability
+- Bound maintenance-window and resource-watch state, backup listing, and archive member verification
+  so these features remain safe to use on small VPS instances.
+
+---
+
 ### Security & Distribution
 - Replaced the npm publishing secret with npm Trusted Publishing via GitHub Actions OIDC.
   Release credentials are short-lived and workflow-bound; no long-lived npm write token is used.

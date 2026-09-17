@@ -72,6 +72,9 @@ ALLOWED_BACKUP_ROOTS = [
     "/etc/caddy",
 ]
 
+MAX_BACKUP_STATUS_ITEMS = 100
+MAX_BACKUP_VERIFY_MEMBERS = 5000
+
 
 def _format_bytes(bytes_value: int | float) -> str:
     """Format bytes into a human-readable string (B, KB, MB, GB)."""
@@ -81,6 +84,79 @@ def _format_bytes(bytes_value: int | float) -> str:
             return f"{val:.2f} {unit}"
         val /= 1024.0
     return f"{val:.2f} GB"
+
+
+def _backup_destination() -> str:
+    """Return the isolated archive directory used by create_backup."""
+    return "/var/backups/vps-guardian" if os.name != "nt" else os.path.join(".", "backups")
+
+
+def _safe_backup_path(archive_path: str) -> Optional[str]:
+    """Resolve one regular archive below the isolated backup destination."""
+    if not isinstance(archive_path, str) or not archive_path.strip():
+        return None
+    destination = os.path.realpath(os.path.abspath(_backup_destination()))
+    candidate = os.path.realpath(os.path.abspath(archive_path.strip()))
+    if candidate == destination or not candidate.startswith(destination + os.sep):
+        return None
+    if not candidate.endswith(".tar.gz") or os.path.islink(candidate) or not os.path.isfile(candidate):
+        return None
+    return candidate
+
+
+def get_backup_status(limit: int = 20) -> Dict[str, Any]:
+    """List bounded metadata for isolated Guardian archives without reading their content."""
+    if not isinstance(limit, int) or not 1 <= limit <= MAX_BACKUP_STATUS_ITEMS:
+        return {"status": "error", "error": f"limit must be between 1 and {MAX_BACKUP_STATUS_ITEMS}."}
+    destination = os.path.realpath(os.path.abspath(_backup_destination()))
+    try:
+        entries = []
+        with os.scandir(destination) as directory:
+            for entry in directory:
+                if not entry.name.endswith(".tar.gz") or entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                    continue
+                stat = entry.stat(follow_symlinks=False)
+                entries.append({
+                    "archive_path": entry.path.replace("\\", "/"),
+                    "archive_size_bytes": stat.st_size,
+                    "archive_size_human": _format_bytes(stat.st_size),
+                    "modified_at": datetime.datetime.fromtimestamp(stat.st_mtime, datetime.timezone.utc).isoformat(),
+                })
+    except FileNotFoundError:
+        return {"status": "ok", "backup_directory": destination, "archive_count": 0, "archives": [], "note": "No isolated backup directory exists yet."}
+    except (OSError, PermissionError) as exc:
+        return {"status": "error", "error": f"Unable to inspect backup directory: {exc}"}
+    entries.sort(key=lambda item: item["modified_at"], reverse=True)
+    total_bytes = sum(item["archive_size_bytes"] for item in entries)
+    return {"status": "ok", "backup_directory": destination, "archive_count": len(entries), "total_size_bytes": total_bytes, "total_size_human": _format_bytes(total_bytes), "archives": entries[:limit], "truncated": len(entries) > limit}
+
+
+def verify_backup(archive_path: str) -> Dict[str, Any]:
+    """Validate a Guardian tar.gz archive structure without extracting any content.
+
+    The member count is bounded; a larger archive is deliberately reported as
+    not fully verified rather than consuming unbounded CPU or memory.
+    """
+    safe_path = _safe_backup_path(archive_path)
+    if not safe_path:
+        return {"status": "forbidden", "error": "archive_path must be a regular .tar.gz file inside the isolated backup directory."}
+    try:
+        archive_size = os.path.getsize(safe_path)
+        members = 0
+        with tarfile.open(safe_path, mode="r:gz") as archive:
+            while archive.next() is not None:
+                members += 1
+                if members > MAX_BACKUP_VERIFY_MEMBERS:
+                    return {
+                        "status": "limited",
+                        "archive_path": safe_path.replace("\\", "/"),
+                        "archive_size_bytes": archive_size,
+                        "members_checked": MAX_BACKUP_VERIFY_MEMBERS,
+                        "error": "Archive has too many members for a complete low-resource verification.",
+                    }
+        return {"status": "ok", "archive_path": safe_path.replace("\\", "/"), "archive_size_bytes": archive_size, "archive_size_human": _format_bytes(archive_size), "members_checked": members, "verified": True, "note": "Archive structure and compressed stream were read without extracting files."}
+    except (OSError, tarfile.TarError, EOFError) as exc:
+        return {"status": "error", "archive_path": safe_path.replace("\\", "/"), "verified": False, "error": f"Backup verification failed: {exc}"}
 
 
 # ============================================================================
@@ -923,7 +999,7 @@ def create_backup(
         return result
 
     # Setup isolated backup directory
-    backup_dest_dir = "/var/backups/vps-guardian" if os.name != "nt" else os.path.join(".", "backups")
+    backup_dest_dir = _backup_destination()
     try:
         os.makedirs(backup_dest_dir, exist_ok=True)
     except PermissionError:
