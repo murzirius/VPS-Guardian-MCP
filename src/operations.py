@@ -18,8 +18,16 @@ import psutil
 
 MAX_WINDOWS = 100
 MAX_WATCHES = 50
+MAX_RUNBOOKS = 100
 METRICS = {"cpu", "memory", "swap", "disk"}
 _SAFE_TEXT = re.compile(r"(?i)\b(password|secret|token|api[_-]?key)\s*[:=]\s*[^\s,;]+")
+
+# These are deliberately references to existing guarded MCP tools, never shell commands.
+RUNBOOK_TEMPLATES = {
+    "incident-triage": ("Collect health", "Inspect failed services", "Review recent events", "Record handoff"),
+    "routine-health": ("Collect health", "Inspect resource alerts", "Review backups", "Record handoff"),
+    "web-release-check": ("Inspect deployment", "Test HTTP endpoint", "Check TLS certificate", "Record handoff"),
+}
 
 
 def _state_dir() -> str:
@@ -227,3 +235,45 @@ def get_resource_alerts(limit: int = 50) -> Dict[str, Any]:
     ]
     alerts.sort(key=lambda item: (item["current_percent"] - item["threshold_percent"]), reverse=True)
     return {"status": "ok", "active_watch_count": len(active), "samples": samples, "alert_count": min(len(alerts), limit), "alerts": alerts[:limit], "note": "Metrics are sampled only for this request; no background polling is running."}
+
+
+def list_runbook_templates() -> Dict[str, Any]:
+    """List fixed, command-free agent runbook templates."""
+    return {"status": "ok", "templates": [{"template": key, "steps": list(steps)} for key, steps in RUNBOOK_TEMPLATES.items()]}
+
+
+def start_runbook(template: str, title: str = "", target: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
+    """Open a bounded coordination runbook; it does not execute any action."""
+    if template not in RUNBOOK_TEMPLATES:
+        return {"status": "error", "error": "Unknown runbook template."}
+    if title and (not isinstance(title, str) or len(title.strip()) > 160):
+        return {"status": "error", "error": "title must contain at most 160 characters."}
+    if target is not None and (not isinstance(target, str) or len(target.strip()) > 200):
+        return {"status": "error", "error": "target must contain at most 200 characters."}
+    if session_id is not None and (not isinstance(session_id, str) or not re.fullmatch(r"ses_[a-f0-9]{16}", session_id)):
+        return {"status": "error", "error": "session_id has an invalid format."}
+    run_id = f"rb_{secrets.token_hex(8)}"
+    run = {"run_id": run_id, "template": template, "title": _scrub(title) or template, "target": _scrub(target) if target else None, "session_id": session_id, "created_at": _iso(), "status": "active", "steps": [{"step_id": index + 1, "title": step, "status": "pending"} for index, step in enumerate(RUNBOOK_TEMPLATES[template])]}
+    runs = _load("runbooks.json"); runs[run_id] = run
+    if len(runs) > MAX_RUNBOOKS:
+        for key in sorted(runs, key=lambda item: runs[item].get("created_at", ""))[:len(runs) - MAX_RUNBOOKS]: runs.pop(key, None)
+    _save("runbooks.json", runs)
+    return {"status": "ok", "runbook": run, "note": "Runbooks coordinate guarded MCP work; they never run commands or bypass confirmation."}
+
+
+def update_runbook_step(run_id: str, step_id: int, status: str, note: str = "") -> Dict[str, Any]:
+    """Record a runbook step outcome after an agent performs the separate guarded tool call."""
+    if status not in {"completed", "skipped", "blocked"} or not isinstance(step_id, int): return {"status": "error", "error": "Use a valid step_id and completed, skipped, or blocked status."}
+    runs = _load("runbooks.json"); run = runs.get(run_id)
+    if not run or run.get("status") != "active": return {"status": "not_found", "error": "Active runbook was not found."}
+    step = next((item for item in run["steps"] if item["step_id"] == step_id), None)
+    if not step: return {"status": "error", "error": "step_id was not found."}
+    step.update({"status": status, "updated_at": _iso(), "note": _scrub(note)})
+    if all(item["status"] in {"completed", "skipped"} for item in run["steps"]): run["status"] = "completed"; run["closed_at"] = _iso()
+    _save("runbooks.json", runs); return {"status": "ok", "runbook": run}
+
+
+def list_runbooks(include_closed: bool = False) -> Dict[str, Any]:
+    """List active runbooks and optional completed history."""
+    runs = [item for item in _load("runbooks.json").values() if include_closed or item.get("status") == "active"]
+    return {"status": "ok", "runbook_count": len(runs), "runbooks": sorted(runs, key=lambda item: item.get("created_at", ""), reverse=True)}

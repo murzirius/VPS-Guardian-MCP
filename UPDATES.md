@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.21.0] - 2026-09-17
+
+### Added
+- **Agent Runbooks**: Added fixed, command-free incident, health, and web-release checklists. Agents can create a bounded shared runbook and record redacted step outcomes without gaining extra permissions or executing arbitrary commands.
+
+---
+
 ## [0.20.1] - 2026-09-17
 
 ### Reliability

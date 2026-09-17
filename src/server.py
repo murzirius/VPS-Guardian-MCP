@@ -167,6 +167,10 @@ try:
         get_resource_alerts as _get_resource_alerts,
         list_maintenance_windows as _list_maintenance_windows,
         watch_resource_threshold as _watch_resource_threshold,
+        list_runbook_templates as _list_runbook_templates,
+        start_runbook as _start_runbook,
+        update_runbook_step as _update_runbook_step,
+        list_runbooks as _list_runbooks,
     )
     from src.project_workspace import (
         begin_project_patch as _begin_project_patch,
@@ -311,6 +315,10 @@ except ImportError:
         get_resource_alerts as _get_resource_alerts,
         list_maintenance_windows as _list_maintenance_windows,
         watch_resource_threshold as _watch_resource_threshold,
+        list_runbook_templates as _list_runbook_templates,
+        start_runbook as _start_runbook,
+        update_runbook_step as _update_runbook_step,
+        list_runbooks as _list_runbooks,
     )
     from project_workspace import (
         begin_project_patch as _begin_project_patch,
@@ -886,6 +894,30 @@ def watch_resource_threshold(metric: str, threshold_percent: float, ttl_minutes:
 def get_resource_alerts(limit: int = 50) -> str:
     """Evaluate active resource watches once and return current threshold alerts."""
     return json.dumps(_get_resource_alerts(limit), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def list_runbook_templates() -> str:
+    """List command-free agent runbooks built from existing guarded MCP tools."""
+    return json.dumps(_list_runbook_templates(), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def start_runbook(template: str, title: str = "", target: Optional[str] = None, session_id: Optional[str] = None) -> str:
+    """Open a bounded agent runbook; it never runs commands or bypasses confirmation."""
+    return json.dumps(_start_runbook(template, title, target, session_id), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def update_runbook_step(run_id: str, step_id: int, status: str, note: str = "") -> str:
+    """Record the outcome of one runbook step after its separate guarded tool call."""
+    return json.dumps(_update_runbook_step(run_id, step_id, status, note), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def list_runbooks(include_closed: bool = False) -> str:
+    """List active agent runbooks, with optional completed history."""
+    return json.dumps(_list_runbooks(include_closed), indent=2, ensure_ascii=False)
 
 
 @mcp.tool()

@@ -51,6 +51,15 @@ class TestOperations(unittest.TestCase):
         self.assertIn("no background polling", result["note"])
         cpu.assert_called_once_with(interval=0.1)
 
+    def test_runbook_is_bounded_and_never_executes_commands(self):
+        created = operations.start_runbook("incident-triage", "Investigate API incident")
+        self.assertEqual(created["status"], "ok")
+        self.assertIn("never run commands", created["note"])
+        run = created["runbook"]
+        updated = operations.update_runbook_step(run["run_id"], 1, "completed", "token=do-not-leak")
+        self.assertEqual(updated["runbook"]["steps"][0]["status"], "completed")
+        self.assertNotIn("do-not-leak", updated["runbook"]["steps"][0]["note"])
+
 
 class TestBackupInspection(unittest.TestCase):
     def test_backup_status_and_verification_are_isolated(self):
