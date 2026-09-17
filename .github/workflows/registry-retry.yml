@@ -25,11 +25,12 @@ jobs:
         run: |
           ./mcp-publisher validate server.json
           ./mcp-publisher login github-oidc
-          for attempt in 1 2 3 4 5 6; do
+          # Allow for normal registry-index propagation before declaring a failure.
+          for attempt in {1..12}; do
             if ./mcp-publisher publish server.json; then
               exit 0
             fi
-            if [ "$attempt" -eq 6 ]; then
+            if [ "$attempt" -eq 12 ]; then
               exit 1
             fi
             echo "Registry has not indexed the package yet; retrying in 30 seconds."
