@@ -171,6 +171,10 @@ try:
         start_runbook as _start_runbook,
         update_runbook_step as _update_runbook_step,
         list_runbooks as _list_runbooks,
+        create_agent_checkpoint as _create_agent_checkpoint,
+        compare_agent_checkpoint as _compare_agent_checkpoint,
+        list_agent_checkpoints as _list_agent_checkpoints,
+        close_agent_checkpoint as _close_agent_checkpoint,
     )
     from src.project_workspace import (
         begin_project_patch as _begin_project_patch,
@@ -319,6 +323,10 @@ except ImportError:
         start_runbook as _start_runbook,
         update_runbook_step as _update_runbook_step,
         list_runbooks as _list_runbooks,
+        create_agent_checkpoint as _create_agent_checkpoint,
+        compare_agent_checkpoint as _compare_agent_checkpoint,
+        list_agent_checkpoints as _list_agent_checkpoints,
+        close_agent_checkpoint as _close_agent_checkpoint,
     )
     from project_workspace import (
         begin_project_patch as _begin_project_patch,
@@ -918,6 +926,40 @@ def update_runbook_step(run_id: str, step_id: int, status: str, note: str = "") 
 def list_runbooks(include_closed: bool = False) -> str:
     """List active agent runbooks, with optional completed history."""
     return json.dumps(_list_runbooks(include_closed), indent=2, ensure_ascii=False)
+
+
+def _checkpoint_observation(target: str) -> dict:
+    if target == "system":
+        return {"health": _get_system_health(), "failed_units": _get_failed_systemd_units()}
+    return {"workload_health": _get_workload_health(target)}
+
+
+@mcp.tool()
+def create_agent_checkpoint(target: str, label: str = "", session_id: Optional[str] = None) -> str:
+    """Capture a bounded pre-change system or workload observation; no changes are made."""
+    return json.dumps(_create_agent_checkpoint(target, _checkpoint_observation(target), label, session_id), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def compare_agent_checkpoint(checkpoint_id: str) -> str:
+    """Compare a checkpoint to current state and return a confirmation-gated rollback plan."""
+    checkpoints = _list_agent_checkpoints(True).get("checkpoints", [])
+    checkpoint = next((item for item in checkpoints if item.get("checkpoint_id") == checkpoint_id), None)
+    if not checkpoint:
+        return json.dumps({"status": "not_found", "error": "Checkpoint was not found."}, indent=2, ensure_ascii=False)
+    return json.dumps(_compare_agent_checkpoint(checkpoint_id, _checkpoint_observation(checkpoint["target"])), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def list_agent_checkpoints(include_closed: bool = False) -> str:
+    """List active pre-change checkpoints and optional completed history."""
+    return json.dumps(_list_agent_checkpoints(include_closed), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def close_agent_checkpoint(checkpoint_id: str, outcome: str = "") -> str:
+    """Close a checkpoint with a secret-redacted change outcome."""
+    return json.dumps(_close_agent_checkpoint(checkpoint_id, outcome), indent=2, ensure_ascii=False)
 
 
 @mcp.tool()

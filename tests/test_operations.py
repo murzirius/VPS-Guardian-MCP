@@ -60,6 +60,13 @@ class TestOperations(unittest.TestCase):
         self.assertEqual(updated["runbook"]["steps"][0]["status"], "completed")
         self.assertNotIn("do-not-leak", updated["runbook"]["steps"][0]["note"])
 
+    def test_checkpoint_compares_state_without_rollback(self):
+        created = operations.create_agent_checkpoint("system", {"health": {"status": "ok"}})
+        result = operations.compare_agent_checkpoint(created["checkpoint"]["checkpoint_id"], {"health": {"status": "warning"}})
+        self.assertFalse(result["matches"])
+        self.assertEqual(result["changed_sections"], ["health"])
+        self.assertIn("never performs rollback", result["note"])
+
 
 class TestBackupInspection(unittest.TestCase):
     def test_backup_status_and_verification_are_isolated(self):

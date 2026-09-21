@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.22.0] - 2026-09-21
+
+### Added
+- **Agent Checkpoints**: Added bounded, redacted pre-change observations for the system or a workload, state comparison, explicit changed-section reporting, and non-executing rollback plans.
+
+---
+
 ## [0.21.0] - 2026-09-17
 
 ### Added

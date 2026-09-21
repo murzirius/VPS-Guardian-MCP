@@ -7,6 +7,7 @@ when an MCP client asks for them, which keeps small VPS instances predictable.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -19,6 +20,7 @@ import psutil
 MAX_WINDOWS = 100
 MAX_WATCHES = 50
 MAX_RUNBOOKS = 100
+MAX_CHECKPOINTS = 100
 METRICS = {"cpu", "memory", "swap", "disk"}
 _SAFE_TEXT = re.compile(r"(?i)\b(password|secret|token|api[_-]?key)\s*[:=]\s*[^\s,;]+")
 
@@ -277,3 +279,48 @@ def list_runbooks(include_closed: bool = False) -> Dict[str, Any]:
     """List active runbooks and optional completed history."""
     runs = [item for item in _load("runbooks.json").values() if include_closed or item.get("status") == "active"]
     return {"status": "ok", "runbook_count": len(runs), "runbooks": sorted(runs, key=lambda item: item.get("created_at", ""), reverse=True)}
+
+
+def _checkpoint_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    """Store a bounded, redacted JSON-safe observation rather than raw output."""
+    raw = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, default=str)
+    raw = _scrub(raw, 50000)
+    return {"hash": hashlib.sha256(raw.encode("utf-8")).hexdigest(), "data": json.loads(raw)}
+
+
+def create_agent_checkpoint(target: str, snapshot: Dict[str, Any], label: str = "", session_id: Optional[str] = None) -> Dict[str, Any]:
+    """Persist a bounded observation before guarded work; never performs rollback."""
+    if not isinstance(target, str) or not 1 <= len(target.strip()) <= 200 or not isinstance(snapshot, dict):
+        return {"status": "error", "error": "target and a structured snapshot are required."}
+    if session_id is not None and (not isinstance(session_id, str) or not re.fullmatch(r"ses_[a-f0-9]{16}", session_id)):
+        return {"status": "error", "error": "session_id has an invalid format."}
+    stored = _checkpoint_snapshot(snapshot)
+    checkpoint = {"checkpoint_id": f"cp_{secrets.token_hex(8)}", "target": _scrub(target), "label": _scrub(label) or "Pre-change checkpoint", "session_id": session_id, "created_at": _iso(), "status": "active", "snapshot_hash": stored["hash"], "snapshot": stored["data"]}
+    records = _load("agent-checkpoints.json"); records[checkpoint["checkpoint_id"]] = checkpoint
+    if len(records) > MAX_CHECKPOINTS:
+        for key in sorted(records, key=lambda item: records[item].get("created_at", ""))[:len(records) - MAX_CHECKPOINTS]: records.pop(key, None)
+    _save("agent-checkpoints.json", records)
+    return {"status": "ok", "checkpoint": checkpoint, "note": "A checkpoint records state only; rollback always requires a separate guarded action and confirmation."}
+
+
+def compare_agent_checkpoint(checkpoint_id: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    """Compare a current observation to a checkpoint and return a non-executing rollback plan."""
+    checkpoint = _load("agent-checkpoints.json").get(checkpoint_id)
+    if not checkpoint: return {"status": "not_found", "error": "Checkpoint was not found."}
+    current = _checkpoint_snapshot(snapshot)
+    before = checkpoint.get("snapshot", {})
+    changed = sorted(key for key in set(before) | set(current["data"]) if before.get(key) != current["data"].get(key))
+    return {"status": "ok", "checkpoint_id": checkpoint_id, "matches": checkpoint.get("snapshot_hash") == current["hash"], "changed_sections": changed[:50], "rollback_plan": ["Review changed sections.", "Use the relevant guarded recovery or deployment tool.", "Confirm the individual change before applying it."] if changed else [], "note": "This comparison never performs rollback."}
+
+
+def list_agent_checkpoints(include_closed: bool = False) -> Dict[str, Any]:
+    records = _load("agent-checkpoints.json")
+    items = [item for item in records.values() if include_closed or item.get("status") == "active"]
+    return {"status": "ok", "checkpoint_count": len(items), "checkpoints": sorted(items, key=lambda item: item.get("created_at", ""), reverse=True)}
+
+
+def close_agent_checkpoint(checkpoint_id: str, outcome: str = "") -> Dict[str, Any]:
+    records = _load("agent-checkpoints.json"); checkpoint = records.get(checkpoint_id)
+    if not checkpoint: return {"status": "not_found", "error": "Checkpoint was not found."}
+    checkpoint.update({"status": "closed", "closed_at": _iso(), "outcome": _scrub(outcome or "No outcome supplied.")})
+    _save("agent-checkpoints.json", records); return {"status": "ok", "checkpoint": checkpoint}
