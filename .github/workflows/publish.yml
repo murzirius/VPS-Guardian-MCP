@@ -78,11 +78,13 @@ jobs:
         shell: bash
         run: |
           ./mcp-publisher validate server.json
-          ./mcp-publisher login github-oidc
           # Package metadata can take several minutes to propagate from npm and
           # PyPI to the MCP Registry.  Keep the release green while that normal
           # eventual-consistency delay resolves instead of requiring a manual retry.
           for attempt in {1..12}; do
+            # Registry JWTs are short-lived; refresh it while waiting for npm
+            # metadata propagation instead of retrying with an expired token.
+            ./mcp-publisher login github-oidc
             if ./mcp-publisher publish server.json; then
               exit 0
             fi

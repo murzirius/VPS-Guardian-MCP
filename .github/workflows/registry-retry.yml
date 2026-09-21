@@ -24,9 +24,10 @@ jobs:
         shell: bash
         run: |
           ./mcp-publisher validate server.json
-          ./mcp-publisher login github-oidc
           # Allow for normal registry-index propagation before declaring a failure.
           for attempt in {1..12}; do
+            # Refresh the short-lived OIDC-backed Registry JWT for every retry.
+            ./mcp-publisher login github-oidc
             if ./mcp-publisher publish server.json; then
               exit 0
             fi
