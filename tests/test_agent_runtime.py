@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+import datetime as dt
 from unittest import mock
 
 from src import agent_runtime
@@ -39,6 +40,32 @@ class TestAgentRuntime(unittest.TestCase):
         result = agent_runtime.get_event_watch(watch["watch"]["watch_id"])
         self.assertEqual(result["status"], "ok")
         self.assertIn("events", result)
+
+    def test_task_dependencies_leases_and_redacted_result(self):
+        first_session = agent_runtime.start_agent_session("Queue worker one")["session"]["session_id"]
+        second_session = agent_runtime.start_agent_session("Queue worker two")["session"]["session_id"]
+        first = agent_runtime.create_agent_task("Inspect Docker health", priority=90, created_by_session=first_session)["task"]
+        second = agent_runtime.create_agent_task("Summarize incident", depends_on=[first["task_id"]])["task"]
+
+        blocked = agent_runtime.claim_agent_task(second["task_id"], second_session)
+        self.assertEqual(blocked["status"], "blocked")
+        claimed = agent_runtime.claim_agent_task(first["task_id"], first_session)
+        self.assertEqual(claimed["status"], "ok")
+        self.assertEqual(agent_runtime.claim_agent_task(first["task_id"], second_session)["status"], "claimed")
+        finished = agent_runtime.finish_agent_task(first["task_id"], first_session, "completed", "token=private-value healthy")
+        self.assertIn("***REDACTED***", finished["task"]["result"])
+        self.assertEqual(agent_runtime.claim_agent_task(second["task_id"], second_session)["status"], "ok")
+
+    def test_expired_task_lease_is_released_on_queue_read(self):
+        session_id = agent_runtime.start_agent_session("Short lease worker")["session"]["session_id"]
+        task = agent_runtime.create_agent_task("Check backup archive")["task"]
+        agent_runtime.claim_agent_task(task["task_id"], session_id, 5)
+        future = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=6)
+        with mock.patch("src.agent_runtime._now", return_value=future):
+            listed = agent_runtime.list_agent_tasks()
+        refreshed = next(item for item in listed["tasks"] if item["task_id"] == task["task_id"])
+        self.assertEqual(refreshed["status"], "pending")
+        self.assertEqual(refreshed["lease_expirations"], 1)
 
 
 if __name__ == "__main__":

@@ -36,13 +36,13 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.22.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.23.0
 ```
 
 For development from source instead:
 
 ```bash
-git clone --branch v0.22.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+git clone --branch v0.23.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
 cd /opt/vps-guardian-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -80,7 +80,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.22.0",
+        "@murzirius/vps-guardian-mcp@0.23.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -108,7 +108,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.22.0
+@murzirius/vps-guardian-mcp@0.23.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -126,7 +126,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.22.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.23.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.
@@ -157,7 +157,7 @@ To upgrade the VPS server, install the matching version and restart the client c
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==X.Y.Z
 ```
 
-Then replace `@0.20.1` with `@X.Y.Z` in the client configuration. For source installations, fetch the tag, inspect local changes, check out the tag, and reinstall with `.venv/bin/pip install -e .`.
+Then replace `@0.23.0` with `@X.Y.Z` in the client configuration. For source installations, fetch the tag, inspect local changes, check out the tag, and reinstall with `.venv/bin/pip install -e .`.
 
 ## What it can do
 
@@ -165,7 +165,7 @@ VPS Guardian is built around a few workflows instead of a long, unstructured com
 
 - **Observe:** system pressure, processes, services, Docker, databases, ports, TLS, logs and updates.
 - **Understand a workload:** discover a site or Compose project, map its dependencies and health, then collect focused diagnostic evidence.
-- **Coordinate agents:** secret-redacted sessions, handoffs, short-lived workload locks, maintenance windows and resumable server-event watches.
+- **Coordinate agents:** sessions, handoffs, leased work queues, runbooks, checkpoints, workload locks, maintenance windows and resumable server-event watches.
 - **Change safely:** preview impact, stage configuration changes, validate, back up, health-check and roll back when a deployment fails.
 - **Recover deliberately:** create baselines, compare drift, produce repair plans, verify isolated backups and require exact confirmation for changes.
 
@@ -176,6 +176,7 @@ Examples of native MCP tools:
 | “Why is the API slow?” | `diagnose_workload` | Bounded health, logs, OOM and kernel evidence. |
 | “What will a restart affect?” | `get_change_impact` | A read-only dependency and impact report. |
 | “Hand this incident to another agent.” | `handoff_agent_session` | Secret-redacted context and outcome tracking. |
+| “Split this audit between agents.” | `create_agent_task` | Prioritized work with dependencies and expiring ownership. |
 | “Deploy this Nginx change safely.” | `plan_config_deployment` | Validated diff, backup, confirmation and rollback path. |
 
 See the [complete capability guide](https://thomas-studios.com/projects/vps-guardian-mcp#capabilities) and [full tool catalogue](https://thomas-studios.com/projects/vps-guardian-mcp#tools) on the project site.

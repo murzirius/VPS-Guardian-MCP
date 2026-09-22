@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.23.0] - 2026-09-22
+
+### Added
+- **Agent Work Queue**: Added prioritized, dependency-aware shared tasks with session-bound claims,
+  renewable leases, release, completion/failure results, and automatic on-demand lease recovery.
+- Queue results and release reasons are bounded and secret-redacted; task history is capped at 200
+  records and requires no background worker.
+
+### Reliability
+- Linux queue operations use an inter-process file lock so separate MCP processes cannot claim the
+  same task concurrently.
+
+---
+
 ## [0.22.0] - 2026-09-21
 
 ### Added

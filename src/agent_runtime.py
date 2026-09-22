@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import functools
 import json
 import os
 import re
 import secrets
 import subprocess
+import threading
 from typing import Any, Dict, List, Optional
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows compatibility
+    fcntl = None
 
 try:
     from src.safety import get_audit_events
@@ -25,6 +32,9 @@ MAX_TEXT = 1000
 SENSITIVE = re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|authorization|cookie)\s*[:=]\s*['\"]?[^\s,;\"']+")
 URL_CREDENTIALS = re.compile(r"(?i)(://[^\s/:@]+:)[^\s@/]+(@)")
 IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{7,63}$")
+MAX_AGENT_TASKS = 200
+TASK_FINAL_STATES = {"completed", "failed"}
+_TASK_THREAD_LOCK = threading.RLock()
 
 
 def _state_dir() -> str:
@@ -236,3 +246,184 @@ def get_event_watch(watch_id: str, limit: int = 50) -> Dict[str, Any]:
     elapsed = max(1, min(int((_now() - created).total_seconds() / 60) + 1, 1440))
     timeline = get_recent_server_events(elapsed, limit, watch["target"])
     return {"status": timeline.get("status"), "watch": watch, "events": timeline.get("events", []), "event_count": timeline.get("event_count", 0)}
+
+
+def _tasks() -> Dict[str, Dict[str, Any]]:
+    records = _load("agent-tasks.json", {})
+    return records if isinstance(records, dict) else {}
+
+
+def _serialized_task_operation(function):
+    """Serialize queue mutations across MCP processes on Linux."""
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        with _TASK_THREAD_LOCK:
+            descriptor = os.open(_path("agent-tasks.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX)
+                return function(*args, **kwargs)
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
+    return wrapped
+
+
+def _refresh_task_leases(tasks: Dict[str, Dict[str, Any]]) -> bool:
+    """Release expired leases on demand without a background worker."""
+    changed = False
+    now = _now()
+    for task in tasks.values():
+        if task.get("status") != "running":
+            continue
+        try:
+            expired = dt.datetime.fromisoformat(task["lease_expires_at"]) <= now
+        except (KeyError, TypeError, ValueError):
+            expired = True
+        if expired:
+            task.update({"status": "pending", "claimed_by_session": None, "lease_expires_at": None, "updated_at": _iso()})
+            task["lease_expirations"] = int(task.get("lease_expirations", 0)) + 1
+            changed = True
+    return changed
+
+
+def _make_task_capacity(tasks: Dict[str, Dict[str, Any]], protected: Optional[List[str]] = None) -> bool:
+    """Remove only the oldest finished task; never evict active coordination state."""
+    if len(tasks) < MAX_AGENT_TASKS:
+        return True
+    protected_ids = set(protected or [])
+    finished = sorted(
+        (key for key, task in tasks.items() if task.get("status") in TASK_FINAL_STATES and key not in protected_ids),
+        key=lambda key: tasks[key].get("finished_at", tasks[key].get("created_at", "")),
+    )
+    if not finished:
+        return False
+    tasks.pop(finished[0], None)
+    return True
+
+
+def _active_session(session_id: str) -> bool:
+    session = get_agent_session(session_id).get("session")
+    return bool(session and session.get("status") == "active" and _active(session))
+
+
+@_serialized_task_operation
+def create_agent_task(
+    title: str,
+    target: Optional[str] = None,
+    priority: int = 50,
+    depends_on: Optional[List[str]] = None,
+    created_by_session: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a bounded coordination task; it does not execute server actions."""
+    if not isinstance(title, str) or not 3 <= len(title.strip()) <= 160:
+        return {"status": "error", "error": "title must contain 3 to 160 characters."}
+    if target is not None and (not isinstance(target, str) or not 1 <= len(target.strip()) <= 200):
+        return {"status": "error", "error": "target must contain 1 to 200 characters."}
+    if not isinstance(priority, int) or isinstance(priority, bool) or not 0 <= priority <= 100:
+        return {"status": "error", "error": "priority must be an integer between 0 and 100."}
+    if created_by_session:
+        if not _active_session(created_by_session):
+            return {"status": "not_found", "error": "An active creator session is required."}
+    tasks = _tasks()
+    dependencies = depends_on or []
+    if not isinstance(dependencies, list) or len(dependencies) > 10 or any(not isinstance(item, str) for item in dependencies):
+        return {"status": "error", "error": "depends_on must contain at most 10 task IDs."}
+    missing = [item for item in dependencies if item not in tasks]
+    if missing:
+        return {"status": "error", "error": "Every dependency must reference an existing task.", "missing": missing[:10]}
+    if not _make_task_capacity(tasks, dependencies):
+        return {"status": "capacity", "error": f"The queue already contains {MAX_AGENT_TASKS} active tasks."}
+    task_id = f"task_{secrets.token_hex(8)}"
+    task = {
+        "task_id": task_id, "title": _scrub(title), "target": _scrub(target) if target else None,
+        "priority": priority, "depends_on": list(dict.fromkeys(dependencies)), "created_by_session": created_by_session,
+        "created_at": _iso(), "updated_at": _iso(), "status": "pending", "claimed_by_session": None,
+        "lease_expires_at": None, "lease_expirations": 0, "result": None,
+    }
+    tasks[task_id] = task
+    _save("agent-tasks.json", tasks)
+    return {"status": "ok", "task": task, "note": "Tasks coordinate agents only and never execute commands."}
+
+
+@_serialized_task_operation
+def claim_agent_task(task_id: str, session_id: str, lease_minutes: int = 30) -> Dict[str, Any]:
+    """Atomically claim one ready task for an active agent session."""
+    if not _active_session(session_id):
+        return {"status": "not_found", "error": "An active, unexpired session is required."}
+    expires = _expiry(lease_minutes, 240)
+    if not expires:
+        return {"status": "error", "error": "lease_minutes must be between 5 and 240."}
+    tasks = _tasks(); changed = _refresh_task_leases(tasks); task = tasks.get(task_id)
+    if not task:
+        if changed: _save("agent-tasks.json", tasks)
+        return {"status": "not_found", "error": "Task was not found."}
+    if task.get("status") == "running":
+        return {"status": "claimed", "task": task, "error": "Task is leased by another agent session."}
+    if task.get("status") in TASK_FINAL_STATES:
+        return {"status": "closed", "task": task, "error": "Completed or failed tasks cannot be claimed."}
+    blockers = [item for item in task.get("depends_on", []) if tasks.get(item, {}).get("status") != "completed"]
+    if blockers:
+        task["status"] = "blocked"; task["updated_at"] = _iso(); changed = True
+        if changed: _save("agent-tasks.json", tasks)
+        return {"status": "blocked", "task": task, "blocking_tasks": blockers}
+    task.update({"status": "running", "claimed_by_session": session_id, "claimed_at": _iso(), "lease_expires_at": _iso(expires), "updated_at": _iso()})
+    _save("agent-tasks.json", tasks)
+    return {"status": "ok", "task": task}
+
+
+@_serialized_task_operation
+def heartbeat_agent_task(task_id: str, session_id: str, lease_minutes: int = 30) -> Dict[str, Any]:
+    if not _active_session(session_id):
+        return {"status": "not_found", "error": "An active, unexpired session is required."}
+    tasks = _tasks(); changed = _refresh_task_leases(tasks); task = tasks.get(task_id)
+    if not task or task.get("status") != "running" or task.get("claimed_by_session") != session_id:
+        if changed: _save("agent-tasks.json", tasks)
+        return {"status": "not_found", "error": "A matching active task lease is required."}
+    expires = _expiry(lease_minutes, 240)
+    if not expires:
+        return {"status": "error", "error": "lease_minutes must be between 5 and 240."}
+    task.update({"lease_expires_at": _iso(expires), "updated_at": _iso()}); _save("agent-tasks.json", tasks)
+    return {"status": "ok", "task": task}
+
+
+@_serialized_task_operation
+def release_agent_task(task_id: str, session_id: str, reason: str = "") -> Dict[str, Any]:
+    tasks = _tasks(); changed = _refresh_task_leases(tasks); task = tasks.get(task_id)
+    if not task or task.get("status") != "running" or task.get("claimed_by_session") != session_id:
+        if changed: _save("agent-tasks.json", tasks)
+        return {"status": "not_found", "error": "A matching active task lease is required."}
+    task.update({"status": "pending", "claimed_by_session": None, "lease_expires_at": None, "updated_at": _iso(), "last_release_reason": _scrub(reason or "Released by agent.")})
+    _save("agent-tasks.json", tasks); return {"status": "ok", "task": task}
+
+
+@_serialized_task_operation
+def finish_agent_task(task_id: str, session_id: str, outcome: str, result: str = "") -> Dict[str, Any]:
+    if outcome not in TASK_FINAL_STATES:
+        return {"status": "error", "error": "outcome must be completed or failed."}
+    if not _active_session(session_id):
+        return {"status": "not_found", "error": "An active, unexpired session is required."}
+    tasks = _tasks(); changed = _refresh_task_leases(tasks); task = tasks.get(task_id)
+    if not task or task.get("status") != "running" or task.get("claimed_by_session") != session_id:
+        if changed: _save("agent-tasks.json", tasks)
+        return {"status": "not_found", "error": "A matching active task lease is required."}
+    task.update({"status": outcome, "result": _scrub(result or "No result supplied."), "finished_at": _iso(), "lease_expires_at": None, "updated_at": _iso()})
+    _save("agent-tasks.json", tasks); return {"status": "ok", "task": task}
+
+
+@_serialized_task_operation
+def list_agent_tasks(status: Optional[str] = None, include_finished: bool = False, limit: int = 100) -> Dict[str, Any]:
+    valid = {"pending", "running", "blocked", "completed", "failed"}
+    if status is not None and status not in valid:
+        return {"status": "error", "error": "status is not valid."}
+    if not isinstance(limit, int) or not 1 <= limit <= 200:
+        return {"status": "error", "error": "limit must be between 1 and 200."}
+    tasks = _tasks(); changed = _refresh_task_leases(tasks)
+    for task in tasks.values():
+        if task.get("status") == "blocked" and all(tasks.get(item, {}).get("status") == "completed" for item in task.get("depends_on", [])):
+            task["status"] = "pending"; task["updated_at"] = _iso(); changed = True
+    if changed: _save("agent-tasks.json", tasks)
+    items = [task for task in tasks.values() if (include_finished or task.get("status") not in TASK_FINAL_STATES) and (status is None or task.get("status") == status)]
+    items.sort(key=lambda item: (-int(item.get("priority", 0)), item.get("created_at", "")))
+    return {"status": "ok", "task_count": min(len(items), limit), "tasks": items[:limit], "note": "Expired leases are released only when the queue is accessed; no background worker is running."}

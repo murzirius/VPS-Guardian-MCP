@@ -153,6 +153,12 @@ try:
         open_event_watch as _open_event_watch,
         record_session_finding as _record_session_finding,
         start_agent_session as _start_agent_session,
+        create_agent_task as _create_agent_task,
+        claim_agent_task as _claim_agent_task,
+        heartbeat_agent_task as _heartbeat_agent_task,
+        release_agent_task as _release_agent_task,
+        finish_agent_task as _finish_agent_task,
+        list_agent_tasks as _list_agent_tasks,
     )
     from src.changeset import (
         apply_change_set as _apply_change_set,
@@ -305,6 +311,12 @@ except ImportError:
         open_event_watch as _open_event_watch,
         record_session_finding as _record_session_finding,
         start_agent_session as _start_agent_session,
+        create_agent_task as _create_agent_task,
+        claim_agent_task as _claim_agent_task,
+        heartbeat_agent_task as _heartbeat_agent_task,
+        release_agent_task as _release_agent_task,
+        finish_agent_task as _finish_agent_task,
+        list_agent_tasks as _list_agent_tasks,
     )
     from changeset import (
         apply_change_set as _apply_change_set,
@@ -827,6 +839,48 @@ def open_event_watch(target: str, session_id: Optional[str] = None, ttl_minutes:
 def get_event_watch(watch_id: str, limit: int = 50) -> str:
     """Retrieve events seen since an active event watch was opened; this does not push notifications."""
     return json.dumps(_get_event_watch(watch_id, limit), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def create_agent_task(
+    title: str,
+    target: Optional[str] = None,
+    priority: int = 50,
+    depends_on: Optional[list[str]] = None,
+    created_by_session: Optional[str] = None,
+) -> str:
+    """Add a bounded task to the shared agent queue; no server action is executed."""
+    return json.dumps(_create_agent_task(title, target, priority, depends_on, created_by_session), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def claim_agent_task(task_id: str, session_id: str, lease_minutes: int = 30) -> str:
+    """Lease one dependency-ready task to an active agent session."""
+    return json.dumps(_claim_agent_task(task_id, session_id, lease_minutes), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def heartbeat_agent_task(task_id: str, session_id: str, lease_minutes: int = 30) -> str:
+    """Extend a task lease while its owning agent session is still working."""
+    return json.dumps(_heartbeat_agent_task(task_id, session_id, lease_minutes), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def release_agent_task(task_id: str, session_id: str, reason: str = "") -> str:
+    """Return an owned task to the queue with a secret-redacted reason."""
+    return json.dumps(_release_agent_task(task_id, session_id, reason), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def finish_agent_task(task_id: str, session_id: str, outcome: str, result: str = "") -> str:
+    """Complete or fail an owned task and retain a bounded, redacted result."""
+    return json.dumps(_finish_agent_task(task_id, session_id, outcome, result), indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def list_agent_tasks(status: Optional[str] = None, include_finished: bool = False, limit: int = 100) -> str:
+    """List prioritized tasks and release expired leases on demand."""
+    return json.dumps(_list_agent_tasks(status, include_finished, limit), indent=2, ensure_ascii=False)
 
 
 @mcp.tool()
