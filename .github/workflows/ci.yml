@@ -33,6 +33,8 @@ jobs:
           VPS_GUARDIAN_STATE_DIR: ${{ runner.temp }}/vps-guardian/state
           VPS_GUARDIAN_SNAPSHOT_DIR: ${{ runner.temp }}/vps-guardian/snapshots
           VPS_GUARDIAN_WORKLOAD_BASELINE_DIR: ${{ runner.temp }}/vps-guardian/workloads
+      - name: Measure compact response and tool catalog sizes
+        run: python -m tests.response_size_report
       - name: Report coverage
         run: python -m coverage report
       - name: Verify installed dependencies

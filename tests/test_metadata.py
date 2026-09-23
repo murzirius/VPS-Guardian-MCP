@@ -27,7 +27,7 @@ class TestReleaseMetadata(unittest.TestCase):
     def test_readme_links_to_external_tool_catalog(self):
         server = (ROOT / "src" / "server.py").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertGreater(server.count("@mcp.tool()"), 0)
+        self.assertGreater(server.count("@guardian_tool()"), 0)
         self.assertIn(
             "https://thomas-studios.com/projects/vps-guardian-mcp#tools",
             readme,

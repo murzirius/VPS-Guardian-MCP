@@ -36,13 +36,13 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.23.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.24.0
 ```
 
 For development from source instead:
 
 ```bash
-git clone --branch v0.23.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+git clone --branch v0.24.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
 cd /opt/vps-guardian-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -80,11 +80,12 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.23.0",
+        "@murzirius/vps-guardian-mcp@0.24.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
-        "--mode", "controlled"
+        "--mode", "controlled",
+        "--tool-profile", "core"
       ]
     }
   }
@@ -108,7 +109,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.23.0
+@murzirius/vps-guardian-mcp@0.24.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -117,6 +118,8 @@ root
 C:\Users\<WindowsUser>\.ssh\id_ed25519
 --mode
 controlled
+--tool-profile
+core
 ```
 
 Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is connected.
@@ -126,7 +129,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.23.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.24.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.
@@ -157,7 +160,7 @@ To upgrade the VPS server, install the matching version and restart the client c
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==X.Y.Z
 ```
 
-Then replace `@0.23.0` with `@X.Y.Z` in the client configuration. For source installations, fetch the tag, inspect local changes, check out the tag, and reinstall with `.venv/bin/pip install -e .`.
+Then replace `@0.24.0` with `@X.Y.Z` in the client configuration. For source installations, fetch the tag, inspect local changes, check out the tag, and reinstall with `.venv/bin/pip install -e .`.
 
 ## What it can do
 
@@ -168,6 +171,11 @@ VPS Guardian is built around a few workflows instead of a long, unstructured com
 - **Coordinate agents:** sessions, handoffs, leased work queues, runbooks, checkpoints, workload locks, maintenance windows and resumable server-event watches.
 - **Change safely:** preview impact, stage configuration changes, validate, back up, health-check and roll back when a deployment fails.
 - **Recover deliberately:** create baselines, compare drift, produce repair plans, verify isolated backups and require exact confirmation for changes.
+- **Work with code:** read a large file by line range, find Python symbols, search large files, stage a line edit and inspect a bounded Git diff.
+
+For smaller agent context, `--tool-profile core` exposes 41 everyday tools; omit the flag or choose `full` for the complete catalogue. The launcher passes this profile to the server over SSH. Both profiles support compact JSON tool results, while new workload and log summaries return short answers by default. The profile takes effect when the MCP connection starts.
+
+For a large project file, ask the agent to use `get_project_symbols`, then `read_project_file_range` around the relevant lines. A single range call returns at most 100 KB and includes a SHA-256 fingerprint. A subsequent `stage_project_line_edit` sends only changed lines and still uses the existing preview, confirmation, conflict check and backup flow. `get_workload_brief`, `summarize_service_logs` and `get_server_event_delta` provide compact operational context without background polling.
 
 Examples of native MCP tools:
 

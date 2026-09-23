@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import difflib
 import hashlib
+import ast
 import os
 import secrets
 import shutil
@@ -25,6 +26,11 @@ MAX_PROJECTS = 50
 MAX_FILES_SCANNED = 1000
 MAX_MATCHES = 100
 MAX_FILE_READ = 100_000
+MAX_LARGE_FILE = 2_000_000
+MAX_SEARCH_BYTES = 8_000_000
+MAX_RANGE_LINES = 200
+MAX_SYMBOLS = 200
+MAX_EDIT_REPLACEMENT = 50_000
 MAX_PATCHES = 24
 MAX_PATCH_FILES = 3
 MAX_PATCH_BYTES = 300_000
@@ -114,6 +120,11 @@ def _read_bytes(path: str) -> bytes:
 def _project_file(project: str, relative_path: str) -> tuple[Optional[str], Optional[Dict[str, Any]]]:
     relative = _safe_relative(relative_path)
     if not relative: return None, {"status": "error", "error": "relative_path must stay inside the project."}
+    current = project
+    for part in relative.split(os.sep):
+        current = os.path.join(current, part)
+        if os.path.islink(current):
+            return None, {"status": "forbidden", "error": "Project paths cannot contain symlinks."}
     candidate = os.path.realpath(os.path.join(project, relative))
     if not _within(candidate, project) or os.path.islink(candidate):
         return None, {"status": "forbidden", "error": "Path escapes the project or is a symlink."}
@@ -131,8 +142,87 @@ def read_project_file(project_path: str, relative_path: str, max_bytes: int = 50
         with open(path, "rb") as handle: raw = handle.read(limit)
         if b"\0" in raw[:1024]: return {"status": "error", "error": "Binary project files are not readable."}
         text, count = _redact_config_text(raw.decode("utf-8", errors="replace"))
-        return {"status": "ok", "relative_path": os.path.relpath(path, project).replace("\\", "/"), "content": text, "bytes_read": len(raw), "redacted_fields": count, "is_truncated": os.path.getsize(path) > limit}
+        return {"status": "ok", "relative_path": os.path.relpath(path, project).replace("\\", "/"), "content": text, "bytes_read": len(raw), "redacted_fields": count, "is_truncated": os.path.getsize(path) > limit, "next_step": "Use read_project_file_range for later lines." if os.path.getsize(path) > limit else None}
     except OSError as exc: return {"status": "error", "error": str(exc)}
+
+
+def _file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(64 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def read_project_file_range(project_path: str, relative_path: str, start_line: int = 1, max_lines: int = 80, max_bytes: int = 16_000, if_sha256: Optional[str] = None, byte_offset: Optional[int] = None) -> Dict[str, Any]:
+    """Read a bounded line range without loading a large source file into memory."""
+    project, error = _project_path(project_path)
+    if error: return error
+    path, error = _project_file(project, relative_path)
+    if error: return error
+    if not isinstance(start_line, int) or isinstance(start_line, bool) or start_line < 1:
+        return {"status": "error", "error": "start_line must be a positive integer."}
+    if not isinstance(max_lines, int) or not 1 <= max_lines <= MAX_RANGE_LINES:
+        return {"status": "error", "error": f"max_lines must be 1-{MAX_RANGE_LINES}."}
+    if not isinstance(max_bytes, int) or not 100 <= max_bytes <= MAX_FILE_READ:
+        return {"status": "error", "error": f"max_bytes must be 100-{MAX_FILE_READ}."}
+    if byte_offset is not None and (not isinstance(byte_offset, int) or isinstance(byte_offset, bool) or byte_offset < 0):
+        return {"status": "error", "error": "byte_offset must be a non-negative integer."}
+    try:
+        size = os.path.getsize(path)
+        if not os.path.isfile(path): return {"status": "error", "error": "Project file was not found."}
+        if size > MAX_LARGE_FILE: return {"status": "error", "error": f"File exceeds the {MAX_LARGE_FILE}-byte range-read budget."}
+        sha256 = _file_sha256(path)
+        if if_sha256 == sha256: return {"status": "unchanged", "sha256": sha256, "size_bytes": size}
+        if byte_offset is not None:
+            if byte_offset > size: return {"status": "error", "error": "byte_offset exceeds file size."}
+            with open(path, "rb") as handle:
+                handle.seek(byte_offset); raw = handle.read(max_bytes)
+            if b"\0" in raw[:1024]: return {"status": "error", "error": "Binary project files are not readable."}
+            content, redacted = _redact_config_text(raw.decode("utf-8", errors="replace"))
+            end = byte_offset + len(raw)
+            return {"status": "ok", "relative_path": relative_path, "byte_offset": byte_offset, "next_byte_offset": end if end < size else None, "content": content, "bytes_read": len(raw), "size_bytes": size, "sha256": sha256, "redacted_fields": redacted, "is_truncated": end < size}
+        selected = []; used = 0; next_line = start_line; more = False; scanned = 0
+        with open(path, "rb") as handle:
+            for number, line in enumerate(handle, 1):
+                scanned += len(line)
+                if number < start_line: continue
+                if b"\0" in line[:1024]: return {"status": "error", "error": "Binary project files are not readable."}
+                if len(selected) >= max_lines or used + len(line) > max_bytes:
+                    more = True
+                    if not selected:
+                        selected.append(line[:max_bytes]); used = len(selected[0]); next_line = number + 1
+                    break
+                selected.append(line); used += len(line); next_line = number + 1
+        content, redacted = _redact_config_text(b"".join(selected).decode("utf-8", errors="replace"))
+        return {"status": "ok", "relative_path": relative_path, "start_line": start_line, "next_line": next_line if more else None, "content": content, "bytes_read": used, "size_bytes": size, "sha256": sha256, "redacted_fields": redacted, "is_truncated": more, "scanned_bytes": scanned}
+    except OSError as exc: return {"status": "error", "error": str(exc)}
+
+
+def get_project_symbols(project_path: str, relative_path: str, max_symbols: int = 100) -> Dict[str, Any]:
+    """Return Python class/function locations without returning the source body."""
+    project, error = _project_path(project_path)
+    if error: return error
+    path, error = _project_file(project, relative_path)
+    if error: return error
+    if not path.endswith(".py"): return {"status": "error", "error": "Symbol maps currently support Python files."}
+    if not isinstance(max_symbols, int) or not 1 <= max_symbols <= MAX_SYMBOLS:
+        return {"status": "error", "error": f"max_symbols must be 1-{MAX_SYMBOLS}."}
+    try:
+        if os.path.getsize(path) > MAX_LARGE_FILE: return {"status": "error", "error": "File exceeds the symbol-map budget."}
+        with open(path, encoding="utf-8") as handle: source = handle.read(MAX_LARGE_FILE + 1)
+        tree = ast.parse(source, filename=path)
+        symbols = []
+        def walk(body: List[ast.stmt], prefix: str = "") -> None:
+            for node in body:
+                if len(symbols) >= max_symbols: return
+                if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    name = f"{prefix}{node.name}"
+                    symbols.append({"name": name, "kind": "class" if isinstance(node, ast.ClassDef) else "async_function" if isinstance(node, ast.AsyncFunctionDef) else "function", "start_line": node.lineno, "end_line": node.end_lineno})
+                    walk(node.body, name + ".")
+        walk(tree.body)
+        return {"status": "ok", "relative_path": relative_path, "sha256": hashlib.sha256(source.encode()).hexdigest(), "symbols": symbols, "truncated": len(symbols) >= max_symbols}
+    except (OSError, UnicodeError, SyntaxError) as exc: return {"status": "error", "error": str(exc)[:300]}
 
 
 def search_project_code(project_path: str, query: str, max_matches: int = 50) -> Dict[str, Any]:
@@ -140,13 +230,20 @@ def search_project_code(project_path: str, query: str, max_matches: int = 50) ->
     if error: return error
     if not isinstance(query, str) or not 1 <= len(query.strip()) <= 200 or any(ord(item) < 32 for item in query):
         return {"status": "error", "error": "query must contain 1 to 200 printable characters."}
-    limit = max(1, min(int(max_matches), MAX_MATCHES)); matches = []; scanned = 0; needle = query.lower()
+    limit = max(1, min(int(max_matches), MAX_MATCHES)); matches = []; scanned = 0; scanned_bytes = 0; needle = query.lower(); truncated = False
     for current, dirs, files in os.walk(project, followlinks=False):
+        if truncated or scanned >= MAX_FILES_SCANNED or len(matches) >= limit: break
         dirs[:] = [item for item in dirs if item not in IGNORED_DIRS and not os.path.islink(os.path.join(current, item))]
         for name in sorted(files):
             if scanned >= MAX_FILES_SCANNED or len(matches) >= limit: break
             path = os.path.join(current, name)
-            if os.path.islink(path) or os.path.getsize(path) > MAX_FILE_READ: continue
+            if os.path.islink(path): continue
+            try: size = os.path.getsize(path)
+            except OSError: continue
+            if size > MAX_LARGE_FILE: continue
+            if scanned_bytes + size > MAX_SEARCH_BYTES:
+                truncated = True; break
+            scanned_bytes += size
             scanned += 1
             try:
                 with open(path, encoding="utf-8", errors="replace") as handle:
@@ -156,7 +253,7 @@ def search_project_code(project_path: str, query: str, max_matches: int = 50) ->
                             matches.append({"relative_path": os.path.relpath(path, project).replace("\\", "/"), "line": number, "text": clean[:500]})
                             if len(matches) >= limit: break
             except OSError: continue
-    return {"status": "ok", "query": query, "scanned_files": scanned, "matches": matches, "truncated": scanned >= MAX_FILES_SCANNED or len(matches) >= limit}
+    return {"status": "ok", "query": query, "scanned_files": scanned, "scanned_bytes": scanned_bytes, "matches": matches, "truncated": truncated or scanned >= MAX_FILES_SCANNED or len(matches) >= limit}
 
 
 def _cleanup_patches() -> None:
@@ -183,12 +280,56 @@ def stage_project_file_change(patch_id: str, relative_path: str, content: str) -
         path, error = _project_file(item["project_path"], relative_path)
         if error: return error
         try:
+            if os.path.isfile(path) and os.path.getsize(path) > MAX_LARGE_FILE:
+                return {"status": "error", "error": "Existing file exceeds the patch budget; use a smaller file."}
             original = _read_bytes(path) if os.path.isfile(path) else b""
         except OSError as exc: return {"status": "error", "error": str(exc)}
         existing = next((entry for entry in item["files"] if entry["path"] == path), None)
-        total = sum(len(entry["content"].encode("utf-8")) for entry in item["files"] if entry is not existing) + len(content.encode("utf-8"))
+        total = sum(entry.get("staged_bytes", len(entry.get("content", "").encode("utf-8"))) for entry in item["files"] if entry is not existing) + len(content.encode("utf-8"))
         if total > MAX_PATCH_BYTES or (existing is None and len(item["files"]) >= MAX_PATCH_FILES): return {"status": "error", "error": "Patch exceeds its file-count or size budget."}
-        entry = {"path": path, "relative_path": os.path.relpath(path, item["project_path"]).replace("\\", "/"), "original": original, "content": content, "existed": os.path.isfile(path), "baseline_sha256": hashlib.sha256(original).hexdigest() if os.path.isfile(path) else None, "candidate_sha256": hashlib.sha256(content.encode()).hexdigest()}
+        entry = {"path": path, "relative_path": os.path.relpath(path, item["project_path"]).replace("\\", "/"), "original": original, "content": content, "staged_bytes": len(content.encode("utf-8")), "existed": os.path.isfile(path), "baseline_sha256": hashlib.sha256(original).hexdigest() if os.path.isfile(path) else None, "candidate_sha256": hashlib.sha256(content.encode()).hexdigest()}
+        if existing: item["files"].remove(existing)
+        item["files"].append(entry)
+        return {"status": "ok", "file": _public_file(entry), "patch": _public_patch(item)}
+
+
+def _line_edit_candidate(raw: bytes, start_line: int, end_line: int, replacement: str) -> tuple[bytes, str]:
+    source = raw.decode("utf-8")
+    lines = source.splitlines(keepends=True)
+    if start_line < 1 or end_line < start_line - 1 or end_line > len(lines) or start_line > len(lines) + 1:
+        raise ValueError("Line range is outside the file; an insertion uses end_line=start_line-1.")
+    original = "".join(lines[start_line - 1:end_line])
+    candidate = "".join(lines[:start_line - 1]) + replacement + "".join(lines[end_line:])
+    return candidate.encode("utf-8"), original
+
+
+def stage_project_line_edit(patch_id: str, relative_path: str, start_line: int, end_line: int, replacement: str, expected_sha256: Optional[str] = None) -> Dict[str, Any]:
+    """Stage a source edit by line range; the model only sends the changed text."""
+    if not isinstance(replacement, str) or len(replacement.encode("utf-8")) > MAX_EDIT_REPLACEMENT:
+        return {"status": "error", "error": f"replacement must be text up to {MAX_EDIT_REPLACEMENT} bytes."}
+    if not isinstance(start_line, int) or isinstance(start_line, bool) or not isinstance(end_line, int) or isinstance(end_line, bool):
+        return {"status": "error", "error": "start_line and end_line must be integers."}
+    with _patch_lock:
+        _cleanup_patches(); item = _patches.get(patch_id)
+        if not item or item["state"] != "staging": return {"status": "not_found", "error": "Patch is missing, expired, or already used."}
+        path, error = _project_file(item["project_path"], relative_path)
+        if error: return error
+        if not os.path.isfile(path): return {"status": "error", "error": "Project file was not found."}
+        try:
+            if os.path.getsize(path) > MAX_LARGE_FILE: return {"status": "error", "error": "File exceeds the line-edit budget."}
+            original = _read_bytes(path)
+            if b"\0" in original[:1024]: return {"status": "error", "error": "Binary files cannot be edited."}
+            baseline = hashlib.sha256(original).hexdigest()
+            if expected_sha256 is not None and expected_sha256 != baseline:
+                return {"status": "conflict", "error": "File changed since it was inspected."}
+            candidate, old_lines = _line_edit_candidate(original, start_line, end_line, replacement)
+        except (OSError, UnicodeError, ValueError) as exc: return {"status": "error", "error": str(exc)[:300]}
+        if len(candidate) > MAX_LARGE_FILE: return {"status": "error", "error": "Edited file exceeds the line-edit budget."}
+        existing = next((entry for entry in item["files"] if entry["path"] == path), None)
+        total = sum(entry.get("staged_bytes", len(entry.get("content", "").encode("utf-8"))) for entry in item["files"] if entry is not existing) + len(replacement.encode("utf-8"))
+        if total > MAX_PATCH_BYTES or (existing is None and len(item["files"]) >= MAX_PATCH_FILES):
+            return {"status": "error", "error": "Patch exceeds its file-count or size budget."}
+        entry = {"path": path, "relative_path": os.path.relpath(path, item["project_path"]).replace("\\", "/"), "existed": True, "baseline_sha256": baseline, "candidate_sha256": hashlib.sha256(candidate).hexdigest(), "staged_bytes": len(replacement.encode("utf-8")), "edit": {"start_line": start_line, "end_line": end_line, "replacement": replacement, "old_lines": old_lines[:MAX_DIFF_CHARS], "old_truncated": len(old_lines) > MAX_DIFF_CHARS}}
         if existing: item["files"].remove(existing)
         item["files"].append(entry)
         return {"status": "ok", "file": _public_file(entry), "patch": _public_patch(item)}
@@ -200,8 +341,14 @@ def preview_project_patch(patch_id: str) -> Dict[str, Any]:
         if not item or item["state"] != "staging" or not item["files"]: return {"status": "error", "error": "An active patch with staged files is required."}
         diffs = []
         for entry in item["files"]:
-            before, _ = _redact_config_text(entry["original"].decode("utf-8", errors="replace")); after, _ = _redact_config_text(entry["content"])
+            if "edit" in entry:
+                before, _ = _redact_config_text(entry["edit"]["old_lines"])
+                after, _ = _redact_config_text(entry["edit"]["replacement"])
+            else:
+                before, _ = _redact_config_text(entry["original"].decode("utf-8", errors="replace")); after, _ = _redact_config_text(entry["content"])
             diff = "".join(difflib.unified_diff(before.splitlines(True), after.splitlines(True), fromfile=f"{entry['relative_path']} (current)", tofile=f"{entry['relative_path']} (candidate)"))
+            if "edit" in entry:
+                diff = f"Line range {entry['edit']['start_line']}-{entry['edit']['end_line']}\n" + diff
             diffs.append({"relative_path": entry["relative_path"], "diff": diff[:MAX_DIFF_CHARS], "diff_truncated": len(diff) > MAX_DIFF_CHARS})
         params = {"patch_id": patch_id, "project_path": item["project_path"], "files": [_public_file(entry) for entry in item["files"]]}
         auth = request_authorization("apply_project_patch", params, "Apply a bounded source patch with backups; no code is executed.")
@@ -215,14 +362,24 @@ def apply_project_patch(patch_id: str, confirmation_token: Optional[str] = None)
         params = {"patch_id": patch_id, "project_path": item["project_path"], "files": [_public_file(entry) for entry in item["files"]]}
         auth = request_authorization("apply_project_patch", params, "Apply a bounded source patch with backups; no code is executed.", confirmation_token)
         if auth is not None: return auth
+        pending_writes = []
         for entry in item["files"]:
             stable = os.path.realpath(entry["path"])
             if stable != entry["path"] or not _within(stable, item["project_path"]) or os.path.islink(entry["path"]):
                 return {"status": "forbidden", "success": False, "error": "Project file path changed after staging; refusing to write."}
             current = _read_bytes(stable) if os.path.isfile(stable) else b""
             if (hashlib.sha256(current).hexdigest() if os.path.isfile(entry["path"]) else None) != entry["baseline_sha256"]: return {"status": "conflict", "success": False, "error": "Project file changed after staging; prepare a new patch."}
+            if "edit" in entry:
+                try:
+                    candidate, _ = _line_edit_candidate(current, entry["edit"]["start_line"], entry["edit"]["end_line"], entry["edit"]["replacement"])
+                    if hashlib.sha256(candidate).hexdigest() != entry["candidate_sha256"]:
+                        return {"status": "conflict", "success": False, "error": "Line edit candidate changed after staging."}
+                    pending_writes.append((entry["path"], candidate.decode("utf-8")))
+                except (UnicodeError, ValueError) as exc: return {"status": "error", "success": False, "error": str(exc)[:300]}
+            else:
+                pending_writes.append((entry["path"], entry["content"]))
         item["state"] = "applying"
-    writes = [atomic_write_file(entry["path"], entry["content"], backup=True) for entry in item["files"]]
+    writes = [atomic_write_file(path, content, backup=True) for path, content in pending_writes]
     success = all(item.get("success") for item in writes)
     with _patch_lock: _patches.pop(patch_id, None)
     result = {"status": "ok" if success else "error", "success": success, "patch_id": patch_id, "writes": writes, "note": "Use run_project_checks after applying; source code was not executed automatically."}
@@ -237,13 +394,77 @@ def get_project_changes(project_path: str) -> Dict[str, Any]:
     return {"status": "ok", "project_path": project, "git_available": status["available"], "changes": status.get("output", "")[:4000], "diff_stat": diff.get("output", "")[:4000]}
 
 
+def get_project_diff(project_path: str, relative_path: Optional[str] = None, staged: bool = False, context_lines: int = 3, max_bytes: int = 12_000) -> Dict[str, Any]:
+    project, error = _project_path(project_path)
+    if error: return error
+    if not isinstance(context_lines, int) or not 0 <= context_lines <= 10 or not isinstance(max_bytes, int) or not 500 <= max_bytes <= 30_000:
+        return {"status": "error", "error": "context_lines must be 0-10 and max_bytes must be 500-30000."}
+    path_args = []
+    if relative_path is not None:
+        _, error = _project_file(project, relative_path)
+        if error: return error
+        path_args = ["--", relative_path]
+    git = shutil.which("git")
+    if not git: return {"status": "unavailable", "error": "Git is not installed."}
+    args = [git, "-C", project, "diff", "--no-ext-diff", "--no-textconv", f"--unified={context_lines}"]
+    if staged: args.append("--cached")
+    try:
+        process = subprocess.Popen([*args, *path_args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        timed_out = False
+        def stop_if_running() -> None:
+            nonlocal timed_out
+            if process.poll() is None:
+                timed_out = True; process.kill()
+        timer = threading.Timer(8, stop_if_running); timer.daemon = True; timer.start()
+        try:
+            raw = process.stdout.read(max_bytes + 1) if process.stdout else b""
+            if len(raw) > max_bytes and process.poll() is None: process.kill()
+            process.wait(timeout=2)
+        finally:
+            timer.cancel()
+            if process.stdout: process.stdout.close()
+        clean, redacted = _redact_config_text(raw.decode("utf-8", errors="replace"))
+        return {"status": "ok" if not timed_out and (process.returncode == 0 or len(raw) > max_bytes) else "error", "diff": clean[:max_bytes], "redacted_fields": redacted, "is_truncated": len(raw) > max_bytes, "relative_path": relative_path, "staged": staged, "error": "Git diff timed out." if timed_out else f"Git diff exited {process.returncode}." if process.returncode and len(raw) <= max_bytes else None}
+    except (OSError, subprocess.SubprocessError) as exc: return {"status": "error", "error": str(exc)[:300]}
+
+
 def run_project_checks(project_path: str, check: str = "auto") -> Dict[str, Any]:
     project, error = _project_path(project_path)
     if error: return error
     selected = check.strip().lower() if isinstance(check, str) else ""
-    if selected not in {"auto", "python_compile", "git_diff_check"}: return {"status": "error", "error": "check must be auto, python_compile, or git_diff_check."}
-    if selected == "auto": selected = "python_compile" if os.path.isfile(os.path.join(project, "pyproject.toml")) else "git_diff_check"
+    choices = {"auto", "python_compile", "node_check", "compose_config", "git_diff_check"}
+    if selected not in choices: return {"status": "error", "error": "check must be auto, python_compile, node_check, compose_config, or git_diff_check."}
+    if selected == "auto":
+        selected = "python_compile" if os.path.isfile(os.path.join(project, "pyproject.toml")) else "node_check" if os.path.isfile(os.path.join(project, "package.json")) else "git_diff_check"
     if selected == "git_diff_check": return {"status": "ok", "check": selected, "result": _git(project, ["diff", "--check"])}
+    if selected == "compose_config":
+        from_file = next((os.path.join(project, name) for name in ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml") if os.path.isfile(os.path.join(project, name))), None)
+        docker = shutil.which("docker")
+        if not from_file or not docker: return {"status": "unavailable", "check": selected, "error": "Compose file or Docker CLI is unavailable."}
+        try:
+            result = subprocess.run([docker, "compose", "-f", from_file, "config", "--quiet"], cwd=project, capture_output=True, text=True, timeout=15, check=False)
+            return {"status": "ok" if result.returncode == 0 else "error", "check": selected, "success": result.returncode == 0, "output": ((result.stdout or "") + (result.stderr or ""))[:1000]}
+        except (OSError, subprocess.SubprocessError) as exc: return {"status": "error", "check": selected, "error": str(exc)[:300]}
+    if selected == "node_check":
+        node = shutil.which("node")
+        if not node: return {"status": "unavailable", "check": selected, "error": "Node.js is unavailable."}
+        files = []
+        for current, dirs, names in os.walk(project, followlinks=False):
+            dirs[:] = [name for name in dirs if name not in IGNORED_DIRS and not os.path.islink(os.path.join(current, name))]
+            for name in names:
+                path = os.path.join(current, name)
+                if name.endswith((".js", ".mjs", ".cjs")) and not os.path.islink(path) and os.path.getsize(path) <= MAX_LARGE_FILE: files.append(path)
+                if len(files) >= 30: break
+            if len(files) >= 30: break
+        deadline = time.monotonic() + 20; failures = []
+        for path in files:
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0: return {"status": "error", "check": selected, "error": "Node syntax check timed out.", "checked_files": len(files) - len(failures)}
+                result = subprocess.run([node, "--check", path], cwd=project, capture_output=True, text=True, timeout=min(remaining, 5), check=False)
+                if result.returncode: failures.append({"file": os.path.relpath(path, project), "output": ((result.stdout or "") + (result.stderr or ""))[:500]})
+            except (OSError, subprocess.SubprocessError) as exc: failures.append({"file": os.path.relpath(path, project), "output": str(exc)[:300]})
+        return {"status": "ok" if not failures else "error", "check": selected, "success": not failures, "checked_files": len(files), "truncated": len(files) >= 30, "failures": failures[:10]}
     python = shutil.which("python3") or shutil.which("python")
     if not python: return {"status": "unavailable", "error": "Python is unavailable for syntax checking."}
     files: List[str] = []

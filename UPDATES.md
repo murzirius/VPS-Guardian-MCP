@@ -10,6 +10,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.24.0] - 2026-09-23
+
+### Added
+- Large project files can be read by bounded line range; Python symbol maps and streaming literal search locate code without returning the whole file.
+- Line-range project edits stage only replacement text and keep the existing preview, confirmation, conflict and backup flow. Added bounded Git diff reads.
+- Project checks now include allowlisted Node.js syntax and Docker Compose configuration checks alongside Python syntax and Git whitespace checks.
+- Guardian launch detection explains whether a source change needs an MCP reconnect, systemd restart or container restart.
+- Compact workload briefs, grouped service logs, event cursors and unchanged fingerprints reduce repeated agent context.
+- A `core` tool profile exposes the everyday agent workspace catalogue; `full` retains the complete catalogue. The npm launcher accepts `--tool-profile`.
+
+### Efficiency and safety
+- Existing tool replies now include compact JSON text and structured results. Large response paths are bounded, and CI measures catalogue and brief-response sizes.
+- Large-file operations remain on-demand with file and scan budgets; no background indexer is started.
+
+---
+
 ## [0.23.0] - 2026-09-22
 
 ### Added
