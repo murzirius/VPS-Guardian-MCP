@@ -12,6 +12,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, Optional
 
@@ -285,11 +286,12 @@ def advance_agent_job(job_id: str, session_id: Optional[str] = None, background:
 
     if background:
         try:
-            subprocess.Popen(
+            process = subprocess.Popen(
                 [sys.executable, "-m", "src.agent_jobs", "--complete-check", job_id, lease_id],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 close_fds=True, start_new_session=True,
             )
+            threading.Thread(target=process.wait, name="guardian-job-reaper", daemon=True).start()
         except (OSError, ValueError):
             with _transaction() as connection:
                 job = _load(connection, job_id)

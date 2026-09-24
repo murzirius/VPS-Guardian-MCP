@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.25.1] - 2026-09-24
+
+### Fixed
+- Detached Agent Job checks now reap their child process while the MCP connection remains open, avoiding accumulated zombie processes.
+- MCP Registry publishing retries transient GitHub OIDC login failures and waits longer for npm indexing.
+
+---
+
 ## [0.25.0] - 2026-09-24
 
 ### Added
