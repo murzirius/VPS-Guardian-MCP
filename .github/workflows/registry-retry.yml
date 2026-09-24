@@ -25,15 +25,14 @@ jobs:
         run: |
           ./mcp-publisher validate server.json
           # Allow for normal registry-index propagation before declaring a failure.
-          for attempt in {1..12}; do
+          for attempt in {1..24}; do
             # Refresh the short-lived OIDC-backed Registry JWT for every retry.
-            ./mcp-publisher login github-oidc
-            if ./mcp-publisher publish server.json; then
+            if ./mcp-publisher login github-oidc && ./mcp-publisher publish server.json; then
               exit 0
             fi
-            if [ "$attempt" -eq 12 ]; then
+            if [ "$attempt" -eq 24 ]; then
               exit 1
             fi
-            echo "Registry has not indexed the package yet; retrying in 30 seconds."
+            echo "Registry publish or OIDC login is not ready; retrying in 30 seconds."
             sleep 30
           done
