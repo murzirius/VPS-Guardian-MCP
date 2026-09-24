@@ -10,6 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.25.0] - 2026-09-24
+
+### Added
+- Agent Jobs persist a short allowlisted plan, compact read-only check results, revision cursors and progress across MCP reconnections. An optional detached process can finish one read-only step after disconnect; no always-on worker or model runs on the VPS.
+- Job steps use memory-aware concurrency limits, expiry, leases, cancellation and safe retries for interrupted read-only checks.
+- A completed service-status check can lead to one proposed restart through the existing safety-mode confirmation gate, followed by separate health verification. An uncertain restart is not retried automatically.
+
+### Safety
+- Jobs never run arbitrary commands or infer permission from a diagnosis. Results are bounded and redacted, and a service restart is explicitly not presented as reversible.
+
+---
+
 ## [0.24.0] - 2026-09-23
 
 ### Added

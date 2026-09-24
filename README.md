@@ -36,13 +36,13 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.24.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.25.0
 ```
 
 For development from source instead:
 
 ```bash
-git clone --branch v0.24.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+git clone --branch v0.25.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
 cd /opt/vps-guardian-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -80,7 +80,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.24.0",
+        "@murzirius/vps-guardian-mcp@0.25.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -109,7 +109,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.24.0
+@murzirius/vps-guardian-mcp@0.25.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -129,7 +129,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.24.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.25.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.
@@ -160,7 +160,7 @@ To upgrade the VPS server, install the matching version and restart the client c
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==X.Y.Z
 ```
 
-Then replace `@0.24.0` with `@X.Y.Z` in the client configuration. For source installations, fetch the tag, inspect local changes, check out the tag, and reinstall with `.venv/bin/pip install -e .`.
+Then replace `@0.25.0` with `@X.Y.Z` in the client configuration. For source installations, fetch the tag, inspect local changes, check out the tag, and reinstall with `.venv/bin/pip install -e .`.
 
 ## What it can do
 
@@ -168,14 +168,16 @@ VPS Guardian is built around a few workflows instead of a long, unstructured com
 
 - **Observe:** system pressure, processes, services, Docker, databases, ports, TLS, logs and updates.
 - **Understand a workload:** discover a site or Compose project, map its dependencies and health, then collect focused diagnostic evidence.
-- **Coordinate agents:** sessions, handoffs, leased work queues, runbooks, checkpoints, workload locks, maintenance windows and resumable server-event watches.
+- **Coordinate agents:** sessions, handoffs, leased work queues, durable Agent Jobs, runbooks, checkpoints, workload locks, maintenance windows and resumable server-event watches.
 - **Change safely:** preview impact, stage configuration changes, validate, back up, health-check and roll back when a deployment fails.
 - **Recover deliberately:** create baselines, compare drift, produce repair plans, verify isolated backups and require exact confirmation for changes.
 - **Work with code:** read a large file by line range, find Python symbols, search large files, stage a line edit and inspect a bounded Git diff.
 
-For smaller agent context, `--tool-profile core` exposes 41 everyday tools; omit the flag or choose `full` for the complete catalogue. The launcher passes this profile to the server over SSH. Both profiles support compact JSON tool results, while new workload and log summaries return short answers by default. The profile takes effect when the MCP connection starts.
+For smaller agent context, `--tool-profile core` exposes the everyday tools (including Agent Jobs); omit the flag or choose `full` for the complete catalogue. The launcher passes this profile to the server over SSH. Both profiles support compact JSON tool results, while new workload and log summaries return short answers by default. The profile takes effect when the MCP connection starts.
 
 For a large project file, ask the agent to use `get_project_symbols`, then `read_project_file_range` around the relevant lines. A single range call returns at most 100 KB and includes a SHA-256 fingerprint. A subsequent `stage_project_line_edit` sends only changed lines and still uses the existing preview, confirmation, conflict check and backup flow. `get_workload_brief`, `summarize_service_logs` and `get_server_event_delta` provide compact operational context without background polling.
+
+**Agent Jobs:** Create a job with 1-8 allowlisted checks, such as `service_status` and `service_logs` for target `bot.service`. Call `advance_agent_job` once per check. The job, bounded results, and progress survive MCP reconnects; `get_agent_job(after_revision=...)` returns only new results, and another authorized MCP client can continue by job ID. On Linux, `advance_agent_job(background=true)` starts just one detached read-only check that can finish after disconnection; it requires at least 512 MB available memory. After checking the exact service, an agent may propose one `restart_service` recovery. `execute_agent_job_recovery` uses the existing read-only/controlled/unrestricted safety mode; in controlled mode review its one-time confirmation and call again with the token. Then call `verify_agent_job_recovery` and record the conclusion. A possibly executed restart is **never retried automatically** after a disconnect. Jobs do not run an AI model, always-on worker, arbitrary shell commands, or automatic rollback on the VPS; a service restart cannot be undone. Existing reversible change tools retain their own backup and rollback rules.
 
 Examples of native MCP tools:
 
@@ -185,6 +187,7 @@ Examples of native MCP tools:
 | “What will a restart affect?” | `get_change_impact` | A read-only dependency and impact report. |
 | “Hand this incident to another agent.” | `handoff_agent_session` | Secret-redacted context and outcome tracking. |
 | “Split this audit between agents.” | `create_agent_task` | Prioritized work with dependencies and expiring ownership. |
+| “Check this service, then let another agent continue.” | `create_agent_job` | Durable, bounded checks with delta results and gated recovery. |
 | “Deploy this Nginx change safely.” | `plan_config_deployment` | Validated diff, backup, confirmation and rollback path. |
 
 See the [complete capability guide](https://thomas-studios.com/projects/vps-guardian-mcp#capabilities) and [full tool catalogue](https://thomas-studios.com/projects/vps-guardian-mcp#tools) on the project site.

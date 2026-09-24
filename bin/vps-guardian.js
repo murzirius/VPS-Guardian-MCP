@@ -72,7 +72,7 @@ function parseArgs() {
         const pkg = require("../package.json");
         process.stderr.write(`vps-guardian-mcp v${pkg.version}\n`);
       } catch {
-        process.stderr.write("vps-guardian-mcp v0.24.0\n");
+        process.stderr.write("vps-guardian-mcp v0.25.0\n");
       }
       process.exit(0);
     }

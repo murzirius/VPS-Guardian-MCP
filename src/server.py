@@ -171,6 +171,17 @@ try:
         stage_file_change as _stage_file_change,
     )
     from src.resource_policy import get_runtime_budget as _get_runtime_budget
+    from src.agent_jobs import (
+        advance_agent_job as _advance_agent_job,
+        cancel_agent_job as _cancel_agent_job,
+        create_agent_job as _create_agent_job,
+        execute_agent_job_recovery as _execute_agent_job_recovery,
+        finish_agent_job as _finish_agent_job,
+        get_agent_job as _get_agent_job,
+        list_agent_jobs as _list_agent_jobs,
+        propose_agent_job_recovery as _propose_agent_job_recovery,
+        verify_agent_job_recovery as _verify_agent_job_recovery,
+    )
     from src.operations import (
         close_maintenance_window as _close_maintenance_window,
         create_maintenance_window as _create_maintenance_window,
@@ -329,6 +340,17 @@ except ImportError:
         stage_file_change as _stage_file_change,
     )
     from resource_policy import get_runtime_budget as _get_runtime_budget
+    from agent_jobs import (
+        advance_agent_job as _advance_agent_job,
+        cancel_agent_job as _cancel_agent_job,
+        create_agent_job as _create_agent_job,
+        execute_agent_job_recovery as _execute_agent_job_recovery,
+        finish_agent_job as _finish_agent_job,
+        get_agent_job as _get_agent_job,
+        list_agent_jobs as _list_agent_jobs,
+        propose_agent_job_recovery as _propose_agent_job_recovery,
+        verify_agent_job_recovery as _verify_agent_job_recovery,
+    )
     from operations import (
         close_maintenance_window as _close_maintenance_window,
         create_maintenance_window as _create_maintenance_window,
@@ -412,6 +434,9 @@ _CORE_TOOLS = {
     "start_agent_session", "get_agent_session", "record_session_finding", "handoff_agent_session",
     "get_recent_server_events", "get_event_watch", "open_event_watch",
     "create_agent_task", "claim_agent_task", "finish_agent_task", "list_agent_tasks",
+    "create_agent_job", "get_agent_job", "list_agent_jobs", "advance_agent_job",
+    "cancel_agent_job", "finish_agent_job", "propose_agent_job_recovery",
+    "execute_agent_job_recovery", "verify_agent_job_recovery",
 }
 
 
@@ -953,6 +978,60 @@ def finish_agent_task(task_id: str, session_id: str, outcome: str, result: str =
 def list_agent_tasks(status: Optional[str] = None, include_finished: bool = False, limit: int = 100) -> str:
     """List prioritized tasks and release expired leases on demand."""
     return json.dumps(_list_agent_tasks(status, include_finished, limit), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def create_agent_job(title: str, checks: list[str], target: Optional[str] = None, session_id: Optional[str] = None, ttl_hours: int = 168) -> str:
+    """Persist a bounded, read-only Agent Job. Checks: system_health, runtime_budget, workload_brief, event_delta, service_logs, service_status."""
+    return json.dumps(_create_agent_job(title, checks, target, session_id, ttl_hours), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def get_agent_job(job_id: str, after_revision: int = 0) -> str:
+    """Get job progress and compact results; use after_revision to receive only new steps."""
+    return json.dumps(_get_agent_job(job_id, after_revision), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def list_agent_jobs(include_finished: bool = False, limit: int = 25) -> str:
+    """List persistent job summaries without returning step outputs."""
+    return json.dumps(_list_agent_jobs(include_finished, limit), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def advance_agent_job(job_id: str, session_id: Optional[str] = None, background: bool = False) -> str:
+    """Run one bounded read-only step, optionally detached so it can finish after MCP disconnects."""
+    return json.dumps(_advance_agent_job(job_id, session_id, background), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def cancel_agent_job(job_id: str, reason: str = "") -> str:
+    """Cancel a job; in-flight read-only results cannot revive it."""
+    return json.dumps(_cancel_agent_job(job_id, reason), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def finish_agent_job(job_id: str, conclusion: str) -> str:
+    """Record the agent's conclusion after all checks or recovery verification."""
+    return json.dumps(_finish_agent_job(job_id, conclusion), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def propose_agent_job_recovery(job_id: str, service_name: str, reason: str) -> str:
+    """Propose one systemd-service restart after job checks; this does not execute it."""
+    return json.dumps(_propose_agent_job_recovery(job_id, service_name, reason), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def execute_agent_job_recovery(job_id: str, confirmation_token: Optional[str] = None) -> str:
+    """Execute a proposed restart through the existing safety-mode confirmation gate, then require verification."""
+    return json.dumps(_execute_agent_job_recovery(job_id, confirmation_token), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def verify_agent_job_recovery(job_id: str) -> str:
+    """Read service health after a job restart; never restart or roll back automatically."""
+    return json.dumps(_verify_agent_job_recovery(job_id), separators=(",", ":"), ensure_ascii=False)
 
 
 @guardian_tool()
