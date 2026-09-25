@@ -209,6 +209,11 @@ try:
         stage_project_file_change as _stage_project_file_change,
         apply_project_patch as _apply_project_patch,
     )
+    from src.test_capsules import (
+        get_test_capsule_status as _get_test_capsule_status,
+        test_project_patch as _test_project_patch,
+        promote_tested_project_patch as _promote_tested_project_patch,
+    )
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -378,6 +383,11 @@ except ImportError:
         stage_project_file_change as _stage_project_file_change,
         apply_project_patch as _apply_project_patch,
     )
+    from test_capsules import (
+        get_test_capsule_status as _get_test_capsule_status,
+        test_project_patch as _test_project_patch,
+        promote_tested_project_patch as _promote_tested_project_patch,
+    )
 
 try:
     from src.agent_efficiency import (
@@ -430,6 +440,7 @@ _CORE_TOOLS = {
     "read_project_file_range", "get_project_symbols", "get_project_diff", "get_project_changes",
     "begin_project_patch", "stage_project_file_change", "stage_project_line_edit",
     "preview_project_patch", "apply_project_patch", "run_project_checks",
+    "get_test_capsule_status", "test_project_patch", "promote_tested_project_patch",
     "get_workload_brief", "summarize_service_logs", "get_server_event_delta", "get_guardian_launch",
     "start_agent_session", "get_agent_session", "record_session_finding", "handoff_agent_session",
     "get_recent_server_events", "get_event_watch", "open_event_watch",
@@ -1225,6 +1236,24 @@ def get_project_changes(project_path: str) -> str:
 def run_project_checks(project_path: str, check: str = "auto") -> str:
     """Run only fixed safe checks: Git whitespace validation or bounded Python syntax parsing."""
     return json.dumps(_run_project_checks(project_path, check), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def get_test_capsule_status() -> str:
+    """Inspect local Docker and resource prerequisites for isolated project checks."""
+    return json.dumps(_get_test_capsule_status(), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def test_project_patch(patch_id: str, check: str = "auto", confirmation_token: Optional[str] = None) -> str:
+    """Test staged code in one temporary, networkless, resource-limited Docker capsule; controlled mode requires confirmation."""
+    return json.dumps(_test_project_patch(patch_id, check, confirmation_token), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def promote_tested_project_patch(patch_id: str, confirmation_token: Optional[str] = None) -> str:
+    """Apply the exact capsule-tested candidate using existing preview, confirmation and backup rules."""
+    return json.dumps(_promote_tested_project_patch(patch_id, confirmation_token), separators=(",", ":"), ensure_ascii=False)
 
 
 @guardian_tool()

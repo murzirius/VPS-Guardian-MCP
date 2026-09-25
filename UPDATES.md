@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.26.0] - 2026-09-25
+
+### Added
+- Test Capsules check staged project patches against a filtered temporary copy inside a local Docker container. The live project is never mounted, the container has no network, and CPU, memory, process count, temporary storage, output, runtime, snapshot size and concurrency are bounded.
+- Allowlisted Python/JavaScript syntax checks and opt-in Python unittest/npm test runs. A successful capsule result is tied to the staged candidate; `promote_tested_project_patch` reuses the existing patch preview, controlled-mode confirmation, conflict checks and backups.
+- No automatic Docker image pulls or host-execution fallback. Read-only mode refuses capsule execution; low-memory/disk or missing local Docker prerequisites fail closed.
+
+---
+
 ## [0.25.1] - 2026-09-24
 
 ### Fixed

@@ -290,6 +290,7 @@ def stage_project_file_change(patch_id: str, relative_path: str, content: str) -
         entry = {"path": path, "relative_path": os.path.relpath(path, item["project_path"]).replace("\\", "/"), "original": original, "content": content, "staged_bytes": len(content.encode("utf-8")), "existed": os.path.isfile(path), "baseline_sha256": hashlib.sha256(original).hexdigest() if os.path.isfile(path) else None, "candidate_sha256": hashlib.sha256(content.encode()).hexdigest()}
         if existing: item["files"].remove(existing)
         item["files"].append(entry)
+        item["capsule_result"] = None
         return {"status": "ok", "file": _public_file(entry), "patch": _public_patch(item)}
 
 
@@ -332,6 +333,7 @@ def stage_project_line_edit(patch_id: str, relative_path: str, start_line: int, 
         entry = {"path": path, "relative_path": os.path.relpath(path, item["project_path"]).replace("\\", "/"), "existed": True, "baseline_sha256": baseline, "candidate_sha256": hashlib.sha256(candidate).hexdigest(), "staged_bytes": len(replacement.encode("utf-8")), "edit": {"start_line": start_line, "end_line": end_line, "replacement": replacement, "old_lines": old_lines[:MAX_DIFF_CHARS], "old_truncated": len(old_lines) > MAX_DIFF_CHARS}}
         if existing: item["files"].remove(existing)
         item["files"].append(entry)
+        item["capsule_result"] = None
         return {"status": "ok", "file": _public_file(entry), "patch": _public_patch(item)}
 
 
@@ -483,4 +485,4 @@ def run_project_checks(project_path: str, check: str = "auto") -> Dict[str, Any]
 
 
 def _public_file(entry: Dict[str, Any]) -> Dict[str, Any]: return {key: entry[key] for key in ("relative_path", "existed", "baseline_sha256", "candidate_sha256")}
-def _public_patch(item: Dict[str, Any]) -> Dict[str, Any]: return {"patch_id": item["patch_id"], "project_path": item["project_path"], "title": item["title"], "state": item["state"], "file_count": len(item["files"]), "files": [_public_file(entry) for entry in item["files"]], "expires_at": dt.datetime.fromtimestamp(item["expires_at"], dt.timezone.utc).isoformat()}
+def _public_patch(item: Dict[str, Any]) -> Dict[str, Any]: return {"patch_id": item["patch_id"], "project_path": item["project_path"], "title": item["title"], "state": item["state"], "file_count": len(item["files"]), "files": [_public_file(entry) for entry in item["files"]], "capsule_result": item.get("capsule_result"), "expires_at": dt.datetime.fromtimestamp(item["expires_at"], dt.timezone.utc).isoformat()}

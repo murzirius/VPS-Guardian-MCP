@@ -36,13 +36,13 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.25.1
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.26.0
 ```
 
 For development from source instead:
 
 ```bash
-git clone --branch v0.25.1 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+git clone --branch v0.26.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
 cd /opt/vps-guardian-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -80,7 +80,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.25.1",
+        "@murzirius/vps-guardian-mcp@0.26.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -109,7 +109,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.25.1
+@murzirius/vps-guardian-mcp@0.26.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -129,7 +129,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.25.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.26.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.
@@ -171,13 +171,17 @@ VPS Guardian is built around a few workflows instead of a long, unstructured com
 - **Coordinate agents:** sessions, handoffs, leased work queues, durable Agent Jobs, runbooks, checkpoints, workload locks, maintenance windows and resumable server-event watches.
 - **Change safely:** preview impact, stage configuration changes, validate, back up, health-check and roll back when a deployment fails.
 - **Recover deliberately:** create baselines, compare drift, produce repair plans, verify isolated backups and require exact confirmation for changes.
-- **Work with code:** read a large file by line range, find Python symbols, search large files, stage a line edit and inspect a bounded Git diff.
+- **Work with code:** read a large file by line range, find Python symbols, stage a line edit, inspect a bounded Git diff and check a staged change in a temporary Docker capsule.
 
 For smaller agent context, `--tool-profile core` exposes the everyday tools (including Agent Jobs); omit the flag or choose `full` for the complete catalogue. The launcher passes this profile to the server over SSH. Both profiles support compact JSON tool results, while new workload and log summaries return short answers by default. The profile takes effect when the MCP connection starts.
 
 For a large project file, ask the agent to use `get_project_symbols`, then `read_project_file_range` around the relevant lines. A single range call returns at most 100 KB and includes a SHA-256 fingerprint. A subsequent `stage_project_line_edit` sends only changed lines and still uses the existing preview, confirmation, conflict check and backup flow. `get_workload_brief`, `summarize_service_logs` and `get_server_event_delta` provide compact operational context without background polling.
 
 **Agent Jobs:** Create a job with 1-8 allowlisted checks, such as `service_status` and `service_logs` for target `bot.service`. Call `advance_agent_job` once per check. The job, bounded results, and progress survive MCP reconnects; `get_agent_job(after_revision=...)` returns only new results, and another authorized MCP client can continue by job ID. On Linux, `advance_agent_job(background=true)` starts just one detached read-only check that can finish after disconnection; it requires at least 512 MB available memory. After checking the exact service, an agent may propose one `restart_service` recovery. `execute_agent_job_recovery` uses the existing read-only/controlled/unrestricted safety mode; in controlled mode review its one-time confirmation and call again with the token. Then call `verify_agent_job_recovery` and record the conclusion. A possibly executed restart is **never retried automatically** after a disconnect. Jobs do not run an AI model, always-on worker, arbitrary shell commands, or automatic rollback on the VPS; a service restart cannot be undone. Existing reversible change tools retain their own backup and rollback rules.
+
+**Test Capsules:** After `begin_project_patch` and `stage_project_line_edit` (or `stage_project_file_change`), call `get_test_capsule_status`, then `test_project_patch(patch_id, check="auto")`. In `controlled` mode, confirm this code-executing check with its own one-time token. `auto` syntax-checks staged Python or JavaScript files; `python_unittest` and `npm_test` explicitly run project tests. If it passes, call `preview_project_patch` to inspect the diff and obtain the *separate* apply confirmation, then `promote_tested_project_patch` with that token. A failed or edited candidate cannot be promoted through this tool. The existing `apply_project_patch` remains available for projects without Docker and does not claim a capsule test.
+
+Capsules require a **local Linux Docker daemon**, an already-downloaded image (`python:3.12-alpine` or `node:20-alpine` by default) and at least 384 MiB available RAM. An operator may choose an already-local image with project dependencies via `VPS_GUARDIAN_CAPSULE_PYTHON_IMAGE` or `VPS_GUARDIAN_CAPSULE_NODE_IMAGE`. Guardian never pulls images or installs dependencies automatically. It copies at most 250 files / 8 MiB, omits common credential files and dependency directories, and allows one check at a time for 30 seconds. The container gets no network, host environment or live-project mount; CPU, RAM, processes and temporary storage are capped. Tests needing network, writable source files or missing dependencies will fail. **Source files may still contain hard-coded secrets**, so remove those before testing; Docker isolation reduces risk but is not a guarantee against malicious code or kernel vulnerabilities.
 
 Examples of native MCP tools:
 
