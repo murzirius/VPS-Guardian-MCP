@@ -1,6 +1,6 @@
 {
   "name": "@murzirius/vps-guardian-mcp",
-  "version": "0.26.0",
+  "version": "0.26.1",
   "description": "Secure SSH client launcher for the VPS-Guardian-MCP server.",
   "mcpName": "io.github.murzirius/vps-guardian-mcp",
   "main": "bin/vps-guardian.js",

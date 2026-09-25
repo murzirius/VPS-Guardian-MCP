@@ -268,7 +268,7 @@ def _command(check: str, changed: list[str]) -> list[str]:
             raise ValueError("No staged JavaScript file is available for node_syntax.")
         return ["node", "-e", _NODE_SYNTAX, "--", *paths]
     if check == "python_unittest":
-        return ["python", "-I", "-B", "-m", "unittest", "discover", "-s", "tests", "-v"]
+        return ["python", "-B", "-m", "unittest", "discover", "-s", "tests", "-v"]
     if check == "npm_test":
         return ["npm", "--offline", "--no-audit", "--no-fund", "test"]
     raise ValueError("Unsupported capsule check.")

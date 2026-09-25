@@ -36,13 +36,13 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.26.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.26.1
 ```
 
 For development from source instead:
 
 ```bash
-git clone --branch v0.26.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+git clone --branch v0.26.1 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
 cd /opt/vps-guardian-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -80,7 +80,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.26.0",
+        "@murzirius/vps-guardian-mcp@0.26.1",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -109,7 +109,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.26.0
+@murzirius/vps-guardian-mcp@0.26.1
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -129,7 +129,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.26.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.26.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.

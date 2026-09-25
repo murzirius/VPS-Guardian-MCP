@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import os
+import subprocess
 import tempfile
 import types
 import unittest
@@ -146,6 +147,18 @@ class TestCapsules(unittest.TestCase):
             image, error = test_capsules._preflight("python_syntax")
         self.assertIsNone(image)
         self.assertIn("local Unix Docker daemon", error)
+
+    def test_python_unittest_can_import_snapshot_project(self):
+        tests_dir = os.path.join(self.project, "tests")
+        os.mkdir(tests_dir)
+        with open(os.path.join(tests_dir, "test_import.py"), "w", encoding="utf-8") as file:
+            file.write("import unittest\nimport main\nclass ImportTest(unittest.TestCase):\n    def test_import(self):\n        self.assertTrue(hasattr(main, '__file__'))\n")
+        def run(_docker, _image, snapshot, command):
+            completed = subprocess.run(command, cwd=snapshot, capture_output=True, text=True, timeout=10, check=False)
+            return {"status": "ok" if completed.returncode == 0 else "failed", "success": completed.returncode == 0, "output": completed.stderr[-500:]}
+        with self._prerequisites(), mock.patch.object(test_capsules, "_run_container", side_effect=run):
+            result = test_capsules.test_project_patch(self.patch_id, "python_unittest")
+        self.assertTrue(result["success"], result.get("output"))
 
     def test_low_memory_refuses_before_contacting_docker(self):
         with mock.patch.object(test_capsules.sys, "platform", "linux"), mock.patch.object(test_capsules, "fcntl", object()), mock.patch.object(test_capsules, "get_runtime_budget", return_value={"available_memory_bytes": 100 * 1024 * 1024}), mock.patch.object(test_capsules.subprocess, "run") as run:

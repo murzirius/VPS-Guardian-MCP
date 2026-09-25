@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.26.1] - 2026-09-25
+
+### Fixed
+- Python unittest capsules can now import project modules from their temporary snapshot. Added a regression test for this execution path.
+
+---
+
 ## [0.26.0] - 2026-09-25
 
 ### Added
