@@ -10,6 +10,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.27.0] - 2026-09-26
+
+### Added
+- Environment Doctor inspects project Python venv metadata and direct Python/npm dependencies without executing project interpreters, imports, install scripts or package-manager commands.
+- Running Linux systemd MainPID evidence helps spot a Python launch path outside the selected venv; stopped services and wrappers remain explicitly unverified.
+- Bounded dependency issue reports support unchanged fingerprints. Repair plans never change production environments; Capsule environment plans expose reviewed runtime/direct-dependency metadata without downloading or building an image.
+
+### Safety and limits
+- Reads, directory entries, dependency counts, issues and plan pins are capped. Symlinks, special files, malformed or incomplete inventories do not produce a healthy diagnosis. Dependency URL credentials, command arguments and environment contents are not returned.
+- Dynamic declarations, inherited/legacy packages, extras, URL installs and unsupported lock formats require review. No transitive solver, Node engine probe or security-vulnerability audit is claimed.
+
+---
+
 ## [0.26.1] - 2026-09-25
 
 ### Fixed

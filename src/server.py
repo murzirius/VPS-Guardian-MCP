@@ -214,6 +214,12 @@ try:
         test_project_patch as _test_project_patch,
         promote_tested_project_patch as _promote_tested_project_patch,
     )
+    from src.environment_doctor import (
+        inspect_project_environment as _inspect_project_environment,
+        diagnose_project_dependencies as _diagnose_project_dependencies,
+        plan_environment_repair as _plan_environment_repair,
+        plan_capsule_environment as _plan_capsule_environment,
+    )
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -388,6 +394,12 @@ except ImportError:
         test_project_patch as _test_project_patch,
         promote_tested_project_patch as _promote_tested_project_patch,
     )
+    from environment_doctor import (
+        inspect_project_environment as _inspect_project_environment,
+        diagnose_project_dependencies as _diagnose_project_dependencies,
+        plan_environment_repair as _plan_environment_repair,
+        plan_capsule_environment as _plan_capsule_environment,
+    )
 
 try:
     from src.agent_efficiency import (
@@ -419,7 +431,7 @@ except ImportError:
 # Initialize FastMCP Server
 mcp = FastMCP(
     name="VPS-Guardian-MCP",
-    dependencies=["psutil", "docker"],
+    dependencies=["psutil", "docker", "packaging", "tomli"],
     instructions=(
         "Use VPS-Guardian-MCP tools instead of asking the operator to run shell commands. "
         "For an application problem, begin with get_vps_topology or find_workload, then use "
@@ -441,6 +453,8 @@ _CORE_TOOLS = {
     "begin_project_patch", "stage_project_file_change", "stage_project_line_edit",
     "preview_project_patch", "apply_project_patch", "run_project_checks",
     "get_test_capsule_status", "test_project_patch", "promote_tested_project_patch",
+    "inspect_project_environment", "diagnose_project_dependencies",
+    "plan_environment_repair", "plan_capsule_environment",
     "get_workload_brief", "summarize_service_logs", "get_server_event_delta", "get_guardian_launch",
     "start_agent_session", "get_agent_session", "record_session_finding", "handoff_agent_session",
     "get_recent_server_events", "get_event_watch", "open_event_watch",
@@ -1242,6 +1256,30 @@ def run_project_checks(project_path: str, check: str = "auto") -> str:
 def get_test_capsule_status() -> str:
     """Inspect local Docker and resource prerequisites for isolated project checks."""
     return json.dumps(_get_test_capsule_status(), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def inspect_project_environment(project_path: str, service_name: Optional[str] = None, environment_path: Optional[str] = None) -> str:
+    """Inspect Python venv/package metadata and a running systemd MainPID without executing project code."""
+    return json.dumps(_inspect_project_environment(project_path, service_name, environment_path), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def diagnose_project_dependencies(project_path: str, service_name: Optional[str] = None, environment_path: Optional[str] = None, include_dev: bool = False, after_fingerprint: Optional[str] = None) -> str:
+    """Return bounded direct-dependency/lockfile issues and runtime mismatch evidence; unchanged fingerprints suppress repeated reports."""
+    return json.dumps(_diagnose_project_dependencies(project_path, service_name, environment_path, include_dev, after_fingerprint), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def plan_environment_repair(project_path: str, service_name: Optional[str] = None, environment_path: Optional[str] = None) -> str:
+    """Plan an environment repair without installing packages, changing service units or restarting applications."""
+    return json.dumps(_plan_environment_repair(project_path, service_name, environment_path), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def plan_capsule_environment(project_path: str, environment_path: Optional[str] = None, include_dev: bool = False) -> str:
+    """Prepare reviewed runtime/dependency metadata for a capsule image; this does not build, download or verify the image."""
+    return json.dumps(_plan_capsule_environment(project_path, environment_path, include_dev), separators=(",", ":"), ensure_ascii=False)
 
 
 @guardian_tool()
