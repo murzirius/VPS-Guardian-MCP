@@ -17,12 +17,14 @@ try:
     from src.safety import record_audit_event, request_authorization
     from src.web import test_nginx_config
     from src.resource_policy import get_runtime_budget
+    from src.safe_io import read_bounded
 except ImportError:
     from deploy import _run_systemctl
     from files import _redact_config_text, atomic_write_file, is_path_permitted
     from safety import record_audit_event, request_authorization
     from web import test_nginx_config
     from resource_policy import get_runtime_budget
+    from safe_io import read_bounded
 
 
 MAX_CHANGESETS = 32
@@ -86,7 +88,7 @@ def stage_file_change(change_set_id: str, file_path: str, content: str) -> Dict[
     if not os.path.isdir(os.path.dirname(path)) or os.path.islink(path):
         return {"status": "error", "error": "Target parent must exist and target may not be a symlink.", "file_path": path}
     try:
-        original = open(path, "rb").read() if os.path.isfile(path) else b""
+        original = read_bounded(path, MAX_FILE_BYTES) if os.path.isfile(path) else b""
     except OSError as exc:
         return {"status": "error", "error": f"Unable to read current file: {exc}", "file_path": path}
     if len(original) > MAX_FILE_BYTES:
@@ -134,7 +136,7 @@ def apply_change_set(change_set_id: str, confirmation_token: Optional[str] = Non
         if auth is not None: return auth
         for entry in item["files"]:
             allowed, stable = is_path_permitted(entry["file_path"])
-            current = open(stable, "rb").read() if allowed and os.path.isfile(stable) else b""
+            current = read_bounded(stable, MAX_FILE_BYTES) if allowed and os.path.isfile(stable) else b""
             if not allowed or stable != entry["file_path"] or os.path.islink(stable) or (_digest(current) if os.path.isfile(stable) else None) != entry["baseline_sha256"]:
                 return {"status": "conflict", "success": False, "error": "A staged file changed after planning; create a new ChangeSet."}
         item["state"] = "applying"

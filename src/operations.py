@@ -16,13 +16,19 @@ from typing import Any, Dict, List, Optional
 
 import psutil
 
+try:
+    from src.safe_io import atomic_replace, read_bounded, private_directory
+    from src.safety import _scrub_text
+except ImportError:
+    from safe_io import atomic_replace, read_bounded, private_directory
+    from safety import _scrub_text
+
 
 MAX_WINDOWS = 100
 MAX_WATCHES = 50
 MAX_RUNBOOKS = 100
 MAX_CHECKPOINTS = 100
 METRICS = {"cpu", "memory", "swap", "disk"}
-_SAFE_TEXT = re.compile(r"(?i)\b(password|secret|token|api[_-]?key)\s*[:=]\s*[^\s,;]+")
 
 # These are deliberately references to existing guarded MCP tools, never shell commands.
 RUNBOOK_TEMPLATES = {
@@ -42,14 +48,12 @@ def _state_dir() -> str:
 
 
 def _path(name: str) -> str:
-    os.makedirs(_state_dir(), mode=0o700, exist_ok=True)
-    return os.path.join(_state_dir(), name)
+    return os.path.join(private_directory(_state_dir()), name)
 
 
 def _load(name: str) -> Dict[str, Dict[str, Any]]:
     try:
-        with open(_path(name), "r", encoding="utf-8") as file:
-            value = json.load(file)
+        value = json.loads(read_bounded(_path(name), 2 * 1024 * 1024, private=True).decode("utf-8"))
         return value if isinstance(value, dict) else {}
     except (OSError, ValueError, TypeError):
         return {}
@@ -57,11 +61,7 @@ def _load(name: str) -> Dict[str, Dict[str, Any]]:
 
 def _save(name: str, value: Dict[str, Dict[str, Any]]) -> None:
     path = _path(name)
-    temporary = f"{path}.{secrets.token_hex(4)}.tmp"
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-        json.dump(value, file, ensure_ascii=False, indent=2)
-    os.replace(temporary, path)
+    atomic_replace(path, json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8"), private=True)
 
 
 def _now() -> dt.datetime:
@@ -73,7 +73,7 @@ def _iso(value: Optional[dt.datetime] = None) -> str:
 
 
 def _scrub(value: str, maximum: int = 240) -> str:
-    return _SAFE_TEXT.sub("***REDACTED***", value.strip()[:maximum])
+    return _scrub_text(value.strip(), max_chars=maximum) or ""
 
 
 def _is_active(record: Dict[str, Any]) -> bool:

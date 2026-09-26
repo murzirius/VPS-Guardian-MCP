@@ -36,13 +36,13 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.28.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.28.1
 ```
 
 For development from source instead:
 
 ```bash
-git clone --branch v0.28.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+git clone --branch v0.28.1 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
 cd /opt/vps-guardian-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -80,7 +80,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.28.0",
+        "@murzirius/vps-guardian-mcp@0.28.1",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -109,7 +109,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.28.0
+@murzirius/vps-guardian-mcp@0.28.1
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -129,7 +129,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.28.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.28.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.
@@ -212,9 +212,12 @@ See the [complete capability guide](https://thomas-studios.com/projects/vps-guar
 
 - No arbitrary command-execution MCP tool.
 - Server-side allow-lists for files, paths, services and mutation types.
-- `controlled` mode uses parameter-bound, single-use confirmation tokens.
-- Secret values are redacted from file reads, sessions, audit data and diagnostic output.
+- `controlled` mode uses parameter-bound, single-use confirmation tokens. This is **not independent human approval**: the caller receives the token and can repeat the operation. Client approval or a separately enforced operator policy is required for that guarantee. An agent with unrestricted SSH access can bypass MCP restrictions.
+- Common secret patterns are redacted from file reads, sessions, audit data and diagnostic output. Redaction is best-effort, not a guarantee against every hard-coded credential or sensitive identifier.
 - Reads, logs, directory scans and stored state are bounded for small VPSs.
+
+On Linux, hardened project/config reads refuse symlink components and special files. Atomic writes pin the parent directory, refuse unsafe backup paths, use private unique backups and preserve normal ownership/permissions without setuid/setgid bits. Existing private state directories must be owned by the service user with `0700`, state/audit files with `0600`; unsafe paths fail closed rather than being silently chmodded. Audit files stop accepting writes at 4 MiB each (primary/fallback), and reads inspect at most a 256 KiB tail; an operator must archive/reset full logs. The fallback audit filename is scoped to the effective UID. Python syntax checks use bounded source snapshots with an isolated interpreter, skip oversized files and never claim full success for incomplete scans. These protections do not make root execution or a shared SSH key an isolation boundary.
+
 
 Details: [security model](https://thomas-studios.com/projects/vps-guardian-mcp#security) · [agent operating guide](https://thomas-studios.com/projects/vps-guardian-mcp#agent-workflows)
 

@@ -9,6 +9,7 @@
 
 const { spawn } = require("child_process");
 const path = require("path");
+const net = require("net");
 
 function printHelp() {
   process.stderr.write(`
@@ -47,8 +48,7 @@ EXAMPLES:
 \n`);
 }
 
-function parseArgs() {
-  const args = process.argv.slice(2);
+function parseArgs(args = process.argv.slice(2)) {
   let host = "";
   let user = "root";
   let key = "";
@@ -84,7 +84,9 @@ function parseArgs() {
     } else if ((arg === "-i" || arg === "--key" || arg === "--identity") && i + 1 < args.length) {
       key = args[++i];
     } else if ((arg === "-p" || arg === "--port") && i + 1 < args.length) {
-      port = parseInt(args[++i], 10) || 22;
+      const value = args[++i];
+      if (!/^[0-9]+$/.test(value)) throw new Error("--port must be an integer from 1 to 65535.");
+      port = Number(value);
     } else if (arg === "--known-hosts" && i + 1 < args.length) {
       knownHosts = args[++i];
     } else if (arg === "--accept-new-host-key") {
@@ -104,21 +106,35 @@ function parseArgs() {
       } else {
         host = arg;
       }
+    } else {
+      throw new Error(`Unknown argument or missing value: ${arg}`);
     }
   }
 
   const validModes = new Set(["read-only", "controlled", "unrestricted"]);
   if (!validModes.has(mode)) {
-    process.stderr.write(`Error: Invalid --mode '${mode}'.\n`);
-    process.exit(1);
+    throw new Error(`Invalid --mode '${mode}'.`);
   }
 
   if (!new Set(["core", "full"]).has(toolProfile)) {
-    process.stderr.write(`Error: Invalid --tool-profile '${toolProfile}'.\n`);
-    process.exit(1);
+    throw new Error(`Invalid --tool-profile '${toolProfile}'.`);
+  }
+
+  const plainHost = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (!host || host.length > 253 || (!net.isIP(plainHost) && !/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(host))) {
+    throw new Error("--host must be an IP address or a hostname without shell characters.");
+  }
+  if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/.test(user)) throw new Error("Invalid SSH username.");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("--port must be an integer from 1 to 65535.");
+  if (!remotePath.startsWith("/") || remotePath.length > 1024 || /[\x00-\x1f\x7f]/.test(remotePath)) {
+    throw new Error("--remote-path must be an absolute POSIX path without control characters.");
   }
 
   return { host, user, key, port, knownHosts, acceptNewHostKey, remotePath, mode, toolProfile };
+}
+
+function shellQuote(value) {
+  return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
 function main() {
@@ -164,7 +180,9 @@ function main() {
   }
 
   sshArgs.push(`${user}@${host}`);
-  sshArgs.push("env", `VPS_GUARDIAN_MODE=${mode}`, `VPS_GUARDIAN_TOOL_PROFILE=${toolProfile}`, remotePath);
+  // OpenSSH joins the remote command into shell text, even though local spawn
+  // uses an argv array. Quote the executable rather than trusting that array.
+  sshArgs.push(`env VPS_GUARDIAN_MODE=${mode} VPS_GUARDIAN_TOOL_PROFILE=${toolProfile} ${shellQuote(remotePath)}`);
 
   // Spawn SSH with direct stdio inheritance for seamless JSON-RPC MCP streaming
   const child = spawn("ssh", sshArgs, {
@@ -193,4 +211,11 @@ function main() {
   });
 }
 
-main();
+module.exports = { parseArgs, shellQuote, main };
+if (require.main === module) {
+  try { main(); }
+  catch (error) {
+    process.stderr.write(`[vps-guardian-mcp] ${error.message}\n`);
+    process.exitCode = 1;
+  }
+}

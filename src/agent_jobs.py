@@ -23,6 +23,7 @@ try:
     from src.recover import run_recovery_action
     from src.resource_policy import get_runtime_budget
     from src.safety import _redact
+    from src.safe_io import private_directory, open_regular_fd
 except ImportError:  # pragma: no cover - direct script compatibility
     from agent_runtime import _scrub, _state_dir, get_agent_session
     from agent_efficiency import get_server_event_delta, get_workload_brief, summarize_service_logs
@@ -30,6 +31,7 @@ except ImportError:  # pragma: no cover - direct script compatibility
     from recover import run_recovery_action
     from resource_policy import get_runtime_budget
     from safety import _redact
+    from safe_io import private_directory, open_regular_fd
 
 
 MAX_JOBS = 100
@@ -52,11 +54,13 @@ def _iso(value: Optional[dt.datetime] = None) -> str:
 
 @contextmanager
 def _transaction() -> Iterator[sqlite3.Connection]:
-    directory = _state_dir()
-    os.makedirs(directory, mode=0o700, exist_ok=True)
+    directory = private_directory(_state_dir())
     path = os.path.join(directory, "agent-jobs.sqlite3")
     if os.path.islink(path):
         raise OSError("Agent Jobs database must not be a symlink.")
+    if os.path.exists(path):
+        descriptor = open_regular_fd(path, private=True)
+        os.close(descriptor)
     connection = sqlite3.connect(path, timeout=5)
     try:
         if os.name != "nt":

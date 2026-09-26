@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime
-from collections import deque
 import hashlib
 import json
 import os
@@ -14,6 +13,16 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
+try:
+    import fcntl
+except ImportError:  # Windows development host
+    fcntl = None
+
+try:
+    from src.safe_io import open_regular_fd, regular_file
+except ImportError:
+    from safe_io import open_regular_fd, regular_file
+
 
 VALID_SAFETY_MODES = {"read-only", "controlled", "unrestricted"}
 DEFAULT_TOKEN_TTL_SECONDS = 300
@@ -23,9 +32,11 @@ _SENSITIVE_KEY_PATTERN = re.compile(
 )
 _SENSITIVE_TEXT_PATTERN = re.compile(
     r"(?i)\b(password|passwd|secret|token|api[_-]?key|private[_-]?key|"
-    r"credential|authorization|cookie)\s*[:=]\s*['\"]?[^\s,;\"']+"
+    r'''credential|authorization|cookie)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n]+)'''
 )
-_URL_CREDENTIAL_PATTERN = re.compile(r"(?i)(://[^\s/:@]+:)[^\s@/]+(@)")
+_URL_CREDENTIAL_PATTERN = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+(@)")
+MAX_AUDIT_BYTES = 4 * 1024 * 1024
+MAX_AUDIT_TAIL = 256 * 1024
 _pending_confirmations: Dict[str, Dict[str, Any]] = {}
 _confirmation_lock = threading.Lock()
 _audit_lock = threading.Lock()
@@ -68,17 +79,17 @@ def _redact(value: Any, key: str = "") -> Any:
         return {str(k): _redact(v, str(k)) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_redact(item) for item in value]
-    if isinstance(value, str) and len(value) > 500:
-        return value[:497] + "..."
+    if isinstance(value, str):
+        return _scrub_text(value)
     return value
 
 
-def _scrub_text(value: Any) -> Optional[str]:
+def _scrub_text(value: Any, max_chars: int = 500) -> Optional[str]:
     if value is None:
         return None
-    text = str(value)[:500]
+    text = str(value)[:10_000]
     redacted = _SENSITIVE_TEXT_PATTERN.sub(r"\1=***REDACTED***", text)
-    return _URL_CREDENTIAL_PATTERN.sub(r"\1***REDACTED***\2", redacted)
+    return _URL_CREDENTIAL_PATTERN.sub(r"\1***REDACTED***\2", redacted)[:max_chars]
 
 
 def request_authorization(
@@ -187,9 +198,18 @@ def _append_json_line(path: str, event: Dict[str, Any]) -> bool:
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        with os.fdopen(descriptor, "a", encoding="utf-8") as audit_file:
-            audit_file.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+        raw = (json.dumps(event, ensure_ascii=False, default=str) + "\n").encode("utf-8")
+        if len(raw) > MAX_AUDIT_TAIL:
+            return False
+        descriptor = open_regular_fd(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, private=True)
+        with os.fdopen(descriptor, "ab") as audit_file:
+            if fcntl is not None:
+                # Independent MCP processes must not race the size check. Fail
+                # immediately on contention, never block the agent on a lock.
+                fcntl.flock(audit_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if os.fstat(audit_file.fileno()).st_size + len(raw) > MAX_AUDIT_BYTES:
+                return False
+            audit_file.write(raw)
         return True
     except (OSError, PermissionError):
         return False
@@ -219,7 +239,7 @@ def record_audit_event(
         if _append_json_line(primary_path, event):
             _last_audit_path = primary_path
             return primary_path
-        fallback_path = os.path.join(tempfile.gettempdir(), "vps-guardian-audit.jsonl")
+        fallback_path = _fallback_audit_path()
         if _append_json_line(fallback_path, event):
             _last_audit_path = fallback_path
             return fallback_path
@@ -239,11 +259,17 @@ def get_safety_status() -> Dict[str, Any]:
         "safety_mode": mode,
         "state_changes_enabled": mode != "read-only",
         "confirmation_required": mode == "controlled",
+        "human_approval_enforced": False,
         "confirmation_ttl_seconds": _token_ttl_seconds(),
         "pending_confirmations": active_count,
         "audit_log_path": _last_audit_path or _configured_audit_path(),
         "available_modes": sorted(VALID_SAFETY_MODES),
     }
+
+
+def _fallback_audit_path() -> str:
+    suffix = str(os.geteuid()) if hasattr(os, "geteuid") else "local"
+    return os.path.join(tempfile.gettempdir(), f"vps-guardian-{suffix}-audit.jsonl")
 
 
 def get_audit_events(limit: int = 50) -> Dict[str, Any]:
@@ -254,26 +280,36 @@ def get_audit_events(limit: int = 50) -> Dict[str, Any]:
         bounded_limit = 50
 
     primary_path = _configured_audit_path()
-    fallback_path = os.path.join(tempfile.gettempdir(), "vps-guardian-audit.jsonl")
+    fallback_path = _fallback_audit_path()
     candidates = [_last_audit_path, primary_path, fallback_path]
     path = next((item for item in candidates if item and os.path.isfile(item)), primary_path)
     if not os.path.isfile(path):
         return {"status": "ok", "audit_log_path": path, "event_count": 0, "events": []}
 
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as audit_file:
-            lines = list(deque(audit_file, maxlen=bounded_limit))
+        with regular_file(path, private=True) as audit_file:
+            size = os.fstat(audit_file.fileno()).st_size
+            offset = max(0, size - MAX_AUDIT_TAIL)
+            audit_file.seek(offset)
+            raw = audit_file.read(MAX_AUDIT_TAIL)
+        lines = raw.decode("utf-8", errors="replace").splitlines()
+        if offset and lines:
+            lines.pop(0)
+        lines = lines[-bounded_limit:]
         events = []
         for line in lines:
             try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
+                event = json.loads(line)
+                if isinstance(event, dict):
+                    events.append(_redact(event))
+            except (ValueError, RecursionError):
                 continue
         return {
             "status": "ok",
             "audit_log_path": path,
             "event_count": len(events),
             "events": events,
+            "tail_truncated": bool(offset),
         }
     except (OSError, PermissionError) as exc:
         return {"status": "error", "error": f"Unable to read audit log: {exc}", "events": []}

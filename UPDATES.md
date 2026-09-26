@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.28.1] - 2026-09-26
+
+### Security fixes
+- Quote the remote executable as POSIX shell text: OpenSSH joins remote argv, so a local spawn array alone was not sufficient. Strictly validate host/user/port/path and reject unknown or missing arguments. Added real launcher regression tests.
+- Fix secret redaction for bare keys, quoted JSON, directives, diff-prefixed assignments, spaced values and URL userinfo; scrub nested audit parameters and shared notes.
+- Harden regular-file reads against symlink components and FIFOs. Pin Linux write directories, reject unsafe backup paths, create unique private copies, preserve ordinary ownership/permissions and reject concurrent target changes. Bound previous file reads before allocating them.
+- Use private, bounded state files and safe queue locks; validate state directory ownership/modes and existing job databases. Audit reads use a bounded tail; writes refuse unsafe ownership/permissions/links and stop at a file-size cap.
+- Run Python syntax checks on bounded stdin snapshots with `-I -S`, not an environment-influenced interpreter importing from cwd. Return source-free syntax errors and explicitly incomplete scans. Capsule source opens are nonblocking to prevent FIFO-swap hangs.
+
+### Documentation
+- Clarify that controlled tokens are not human identity/approval proof, secret scrubbing is best-effort and root/shared-SSH access is not isolated. Independent privilege separation, end-to-end transactional project changes and production load/security validation remain future work.
+
+---
+
 ## [0.28.0] - 2026-09-26
 
 ### Added

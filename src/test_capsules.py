@@ -134,14 +134,14 @@ def _open_project_regular(project: str, relative: str) -> int:
     """Open each path component without following symlinks on Linux."""
     parts = relative.split("/")
     if os.name != "posix":  # pragma: no cover - capsules never run on Windows
-        return os.open(os.path.join(project, *parts), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        return os.open(os.path.join(project, *parts), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     directory = os.open(project, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for part in parts[:-1]:
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
             os.close(directory)
             directory = child
-        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     finally:
         os.close(directory)
 

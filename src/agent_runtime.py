@@ -19,9 +19,11 @@ except ImportError:  # pragma: no cover - Windows compatibility
     fcntl = None
 
 try:
-    from src.safety import get_audit_events
+    from src.safety import get_audit_events, _scrub_text
+    from src.safe_io import atomic_replace, read_bounded, private_directory, open_regular_fd
 except ImportError:  # pragma: no cover - direct script compatibility
-    from safety import get_audit_events
+    from safety import get_audit_events, _scrub_text
+    from safe_io import atomic_replace, read_bounded, private_directory, open_regular_fd
 try:
     from src.resource_policy import get_runtime_budget
 except ImportError:
@@ -29,8 +31,6 @@ except ImportError:
 
 
 MAX_TEXT = 1000
-SENSITIVE = re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|authorization|cookie)\s*[:=]\s*['\"]?[^\s,;\"']+")
-URL_CREDENTIALS = re.compile(r"(?i)(://[^\s/:@]+:)[^\s@/]+(@)")
 IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{7,63}$")
 MAX_AGENT_TASKS = 200
 TASK_FINAL_STATES = {"completed", "failed"}
@@ -47,8 +47,7 @@ def _state_dir() -> str:
 
 
 def _path(name: str) -> str:
-    os.makedirs(_state_dir(), mode=0o700, exist_ok=True)
-    return os.path.join(_state_dir(), name)
+    return os.path.join(private_directory(_state_dir()), name)
 
 
 def _now() -> dt.datetime:
@@ -60,25 +59,20 @@ def _iso(value: Optional[dt.datetime] = None) -> str:
 
 
 def _scrub(value: str) -> str:
-    redacted = SENSITIVE.sub(lambda item: f"{item.group(1)}=***REDACTED***", value.strip()[:MAX_TEXT])
-    return URL_CREDENTIALS.sub(r"\1***REDACTED***\2", redacted)
+    return _scrub_text(value.strip(), max_chars=MAX_TEXT) or ""
 
 
 def _load(name: str, default: Any) -> Any:
     try:
-        with open(_path(name), "r", encoding="utf-8") as file:
-            return json.load(file)
+        value = json.loads(read_bounded(_path(name), 2 * 1024 * 1024, private=True).decode("utf-8"))
+        return value if isinstance(value, type(default)) else default
     except (OSError, ValueError, TypeError):
         return default
 
 
 def _save(name: str, value: Any) -> None:
     path = _path(name)
-    temporary = f"{path}.{secrets.token_hex(4)}.tmp"
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-        json.dump(value, file, ensure_ascii=False, indent=2)
-    os.replace(temporary, path)
+    atomic_replace(path, json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8"), private=True)
 
 
 def _expiry(minutes: int, maximum: int = 10080) -> Optional[dt.datetime]:
@@ -258,7 +252,7 @@ def _serialized_task_operation(function):
     @functools.wraps(function)
     def wrapped(*args, **kwargs):
         with _TASK_THREAD_LOCK:
-            descriptor = os.open(_path("agent-tasks.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+            descriptor = open_regular_fd(_path("agent-tasks.lock"), os.O_RDWR | os.O_CREAT, private=True)
             try:
                 if fcntl is not None:
                     fcntl.flock(descriptor, fcntl.LOCK_EX)

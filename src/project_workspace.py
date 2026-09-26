@@ -12,14 +12,18 @@ import shutil
 import subprocess
 import threading
 import time
+import sys
+import json
 from typing import Any, Dict, List, Optional
 
 try:
     from src.files import _redact_config_text, atomic_write_file
     from src.safety import record_audit_event, request_authorization
+    from src.safe_io import regular_file, read_bounded
 except ImportError:
     from files import _redact_config_text, atomic_write_file
     from safety import record_audit_event, request_authorization
+    from safe_io import regular_file, read_bounded
 
 
 MAX_PROJECTS = 50
@@ -113,8 +117,7 @@ def _safe_relative(path: str) -> Optional[str]:
 
 
 def _read_bytes(path: str) -> bytes:
-    with open(path, "rb") as handle:
-        return handle.read()
+    return read_bounded(path, MAX_LARGE_FILE)
 
 
 def _project_file(project: str, relative_path: str) -> tuple[Optional[str], Optional[Dict[str, Any]]]:
@@ -139,7 +142,7 @@ def read_project_file(project_path: str, relative_path: str, max_bytes: int = 50
     if not os.path.isfile(path): return {"status": "error", "error": "Project file was not found."}
     limit = max(100, min(int(max_bytes), MAX_FILE_READ))
     try:
-        with open(path, "rb") as handle: raw = handle.read(limit)
+        with regular_file(path) as handle: raw = handle.read(limit)
         if b"\0" in raw[:1024]: return {"status": "error", "error": "Binary project files are not readable."}
         text, count = _redact_config_text(raw.decode("utf-8", errors="replace"))
         return {"status": "ok", "relative_path": os.path.relpath(path, project).replace("\\", "/"), "content": text, "bytes_read": len(raw), "redacted_fields": count, "is_truncated": os.path.getsize(path) > limit, "next_step": "Use read_project_file_range for later lines." if os.path.getsize(path) > limit else None}
@@ -148,8 +151,12 @@ def read_project_file(project_path: str, relative_path: str, max_bytes: int = 50
 
 def _file_sha256(path: str) -> str:
     digest = hashlib.sha256()
-    with open(path, "rb") as handle:
+    with regular_file(path) as handle:
+        scanned = 0
         for block in iter(lambda: handle.read(64 * 1024), b""):
+            scanned += len(block)
+            if scanned > MAX_LARGE_FILE:
+                raise OSError("File exceeds the fingerprint read budget.")
             digest.update(block)
     return digest.hexdigest()
 
@@ -176,14 +183,14 @@ def read_project_file_range(project_path: str, relative_path: str, start_line: i
         if if_sha256 == sha256: return {"status": "unchanged", "sha256": sha256, "size_bytes": size}
         if byte_offset is not None:
             if byte_offset > size: return {"status": "error", "error": "byte_offset exceeds file size."}
-            with open(path, "rb") as handle:
+            with regular_file(path) as handle:
                 handle.seek(byte_offset); raw = handle.read(max_bytes)
             if b"\0" in raw[:1024]: return {"status": "error", "error": "Binary project files are not readable."}
             content, redacted = _redact_config_text(raw.decode("utf-8", errors="replace"))
             end = byte_offset + len(raw)
             return {"status": "ok", "relative_path": relative_path, "byte_offset": byte_offset, "next_byte_offset": end if end < size else None, "content": content, "bytes_read": len(raw), "size_bytes": size, "sha256": sha256, "redacted_fields": redacted, "is_truncated": end < size}
         selected = []; used = 0; next_line = start_line; more = False; scanned = 0
-        with open(path, "rb") as handle:
+        with regular_file(path) as handle:
             for number, line in enumerate(handle, 1):
                 scanned += len(line)
                 if number < start_line: continue
@@ -210,7 +217,7 @@ def get_project_symbols(project_path: str, relative_path: str, max_symbols: int 
         return {"status": "error", "error": f"max_symbols must be 1-{MAX_SYMBOLS}."}
     try:
         if os.path.getsize(path) > MAX_LARGE_FILE: return {"status": "error", "error": "File exceeds the symbol-map budget."}
-        with open(path, encoding="utf-8") as handle: source = handle.read(MAX_LARGE_FILE + 1)
+        source = _read_bytes(path).decode("utf-8")
         tree = ast.parse(source, filename=path)
         symbols = []
         def walk(body: List[ast.stmt], prefix: str = "") -> None:
@@ -246,7 +253,7 @@ def search_project_code(project_path: str, query: str, max_matches: int = 50) ->
             scanned_bytes += size
             scanned += 1
             try:
-                with open(path, encoding="utf-8", errors="replace") as handle:
+                with regular_file(path, "r") as handle:
                     for number, line in enumerate(handle, 1):
                         if needle in line.lower():
                             clean, _ = _redact_config_text(line.strip())
@@ -467,20 +474,48 @@ def run_project_checks(project_path: str, check: str = "auto") -> Dict[str, Any]
                 if result.returncode: failures.append({"file": os.path.relpath(path, project), "output": ((result.stdout or "") + (result.stderr or ""))[:500]})
             except (OSError, subprocess.SubprocessError) as exc: failures.append({"file": os.path.relpath(path, project), "output": str(exc)[:300]})
         return {"status": "ok" if not failures else "error", "check": selected, "success": not failures, "checked_files": len(files), "truncated": len(files) >= 30, "failures": failures[:10]}
-    python = shutil.which("python3") or shutil.which("python")
-    if not python: return {"status": "unavailable", "error": "Python is unavailable for syntax checking."}
-    files: List[str] = []
-    for current, dirs, names in os.walk(project, followlinks=False):
-        dirs[:] = [item for item in dirs if item not in IGNORED_DIRS and not os.path.islink(os.path.join(current, item))]
-        for name in names:
-            path = os.path.join(current, name)
-            if name.endswith(".py") and not os.path.islink(path): files.append(path)
-            if len(files) >= 200: break
-        if len(files) >= 200: break
-    checker = "import ast,pathlib,sys; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'), filename=p) for p in sys.argv[1:]]"
+    sources = []; total = 0; entries = 0; skipped = 0; truncated = False
+    pending = [(project, 0)]; deadline = time.monotonic() + 5
     try:
-        result = subprocess.run([python, "-B", "-c", checker, *files], capture_output=True, text=True, timeout=20, check=False)
-        return {"status": "ok" if result.returncode == 0 else "error", "check": selected, "success": result.returncode == 0, "checked_files": len(files), "truncated": len(files) >= 200, "output": ((result.stdout or "") + (result.stderr or ""))[:4000]}
+        while pending:
+            current, depth = pending.pop()
+            with os.scandir(current) as listing:
+                for entry in listing:
+                    entries += 1
+                    if entries > 1000 or time.monotonic() > deadline or len(sources) >= 200 or total >= 2_000_000:
+                        truncated = True; pending.clear(); break
+                    if entry.is_symlink():
+                        skipped += 1; continue
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name not in IGNORED_DIRS:
+                            if depth >= 8: truncated = True
+                            else: pending.append((entry.path, depth + 1))
+                        continue
+                    if not entry.name.endswith(".py"): continue
+                    try:
+                        raw = read_bounded(entry.path, min(128_000, 2_000_000 - total))
+                        total += len(raw)
+                        sources.append({"file": os.path.relpath(entry.path, project).replace("\\", "/"), "source": raw.decode("utf-8")})
+                    except (OSError, ValueError):
+                        skipped += 1
+    except OSError:
+        truncated = True
+    # Isolated interpreter: ignore cwd/PYTHONPATH/sitecustomize. Only AST parsing
+    # of bounded snapshots from stdin; never import source or expose error lines.
+    checker = """import ast,json,sys
+errors=[]
+items=json.load(sys.stdin)
+for item in items:
+ try: ast.parse(item['source'],filename='<source>')
+ except (SyntaxError,RecursionError) as error:
+  errors.append({'file':item['file'],'line':getattr(error,'lineno',None),'error':str(getattr(error,'msg','AST recursion limit'))[:160]})
+print(json.dumps({'errors':errors[:10],'error_count':len(errors)},separators=(',',':')))
+sys.exit(bool(errors))
+"""
+    try:
+        result = subprocess.run([sys.executable, "-I", "-S", "-B", "-c", checker], input=json.dumps(sources), capture_output=True, text=True, timeout=20, check=False)
+        incomplete = truncated or skipped > 0 or not sources
+        return {"status": "error" if result.returncode else "incomplete" if incomplete else "ok", "check": selected, "success": result.returncode == 0 and not incomplete, "checked_files": len(sources), "truncated": truncated, "skipped_files": skipped, "output": result.stdout[:4000] if result.returncode in (0, 1) else "Isolated syntax checker failed; raw diagnostics suppressed."}
     except (OSError, subprocess.SubprocessError) as exc: return {"status": "error", "check": selected, "success": False, "error": str(exc)}
 
 

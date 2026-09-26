@@ -16,9 +16,11 @@ import secrets
 try:
     from src.files import atomic_write_file, is_path_permitted
     from src.safety import record_audit_event, request_authorization
+    from src.safe_io import read_bounded
 except ImportError:
     from files import atomic_write_file, is_path_permitted
     from safety import record_audit_event, request_authorization
+    from safe_io import read_bounded
 
 
 MAX_CONFIG_BYTES = 200_000
@@ -39,8 +41,7 @@ def _truncate_output(value: Any) -> str:
 
 
 def _read_file_bytes(path: str) -> bytes:
-    with open(path, "rb") as file_handle:
-        return file_handle.read()
+    return read_bounded(path, MAX_CONFIG_BYTES)
 
 
 def _service_for_path(path: str, service_name: Optional[str]) -> tuple[Optional[str], Optional[str]]:

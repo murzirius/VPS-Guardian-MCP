@@ -12,8 +12,6 @@ from __future__ import annotations
 import datetime
 import logging
 import os
-import shutil
-import tempfile
 import re
 from typing import Any, Dict, List, Optional
 
@@ -26,8 +24,10 @@ except ImportError:
 
 try:
     from src.safety import record_audit_event, request_authorization
+    from src.safe_io import atomic_replace, regular_file
 except ImportError:
     from safety import record_audit_event, request_authorization
+    from safe_io import atomic_replace, regular_file
 
 # Immutable whitelist of authorized configuration and web directories
 DEFAULT_ALLOWED_DIRECTORIES = [
@@ -38,12 +38,11 @@ DEFAULT_ALLOWED_DIRECTORIES = [
     "/etc/caddy",
     "/var/www",
 ]
-_SENSITIVE_CONFIG_VALUE = re.compile(
-    r"(?im)^(\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_.-]*"
-    r"(?:password|passwd|secret|token|api[_-]?key|private[_-]?key|key|credential|authorization|cookie)"
-    r"[A-Za-z0-9_.-]*\s*[:=]\s*)([^\r\n#]+)"
-)
-_URL_CREDENTIALS = re.compile(r"(?i)(://[^\s/:@]+:)([^\s@/]+)(@)")
+_SECRET_NAME = r"[A-Za-z0-9_.-]*(?:password|passwd|requirepass|masterauth|secret|token|api[_-]?key|private[_-]?key|credential|authorization|cookie)[A-Za-z0-9_.-]*"
+_SENSITIVE_CONFIG_VALUE = re.compile(rf"(?im)^([ \t]*[+-]?[ \t]*(?:export\s+)?(?:{_SECRET_NAME}|key)\s*[:=]\s*)([^\r\n]+)")
+_JSON_CONFIG_VALUE = re.compile(rf'''(?i)(["'](?:{_SECRET_NAME}|key)["']\s*:\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,}}\]\r\n]+)''')
+_DIRECTIVE_CONFIG_VALUE = re.compile(rf"(?im)^([ \t]*[+-]?[ \t]*(?:{_SECRET_NAME}|key)\s+)([^\r\n]+)")
+_URL_CREDENTIALS = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)([^\s/@]+)(@)")
 MAX_FILE_WRITE_BYTES = 2 * 1024 * 1024
 MAX_DIRECTORY_ITEMS = 5000
 
@@ -51,8 +50,10 @@ MAX_DIRECTORY_ITEMS = 5000
 def _redact_config_text(text: str) -> tuple[str, int]:
     """Remove common inline secret values before config text leaves the VPS."""
     redacted, count = _SENSITIVE_CONFIG_VALUE.subn(r"\1***REDACTED***", text)
+    redacted, json_count = _JSON_CONFIG_VALUE.subn(r'\1"***REDACTED***"', redacted)
+    redacted, directive_count = _DIRECTIVE_CONFIG_VALUE.subn(r"\1***REDACTED***", redacted)
     redacted, url_count = _URL_CREDENTIALS.subn(r"\1***REDACTED***\3", redacted)
-    return redacted, count + url_count
+    return redacted, count + json_count + directive_count + url_count
 
 
 def _format_bytes(bytes_value: int | float) -> str:
@@ -146,10 +147,9 @@ def view_file_content(file_path: str, max_bytes: int = 50000) -> Dict[str, Any]:
         max_bytes = 50000
 
     try:
-        file_stat = os.stat(canonical_path)
-        total_size = file_stat.st_size
-
-        with open(canonical_path, "rb") as f:
+        with regular_file(canonical_path) as f:
+            file_stat = os.fstat(f.fileno())
+            total_size = file_stat.st_size
             raw_data = f.read(max_bytes)
 
         # Detect binary files (null bytes)
@@ -212,50 +212,9 @@ def atomic_write_file(
             "file_path": canonical_path,
         }
 
-    backup_path = None
-    existing_file = os.path.exists(canonical_path)
-
-    if existing_file and backup:
-        timestamp_suffix = datetime.datetime.now(datetime.timezone.utc).strftime(
-            "%Y%m%d_%H%M%S"
-        )
-        backup_path = f"{canonical_path}.bak.{timestamp_suffix}"
-        try:
-            shutil.copy2(canonical_path, backup_path)
-            shutil.copy2(canonical_path, f"{canonical_path}.bak")
-        except Exception as exc:
-            logger.error(f"Failed to create backup of '{canonical_path}': {exc}")
-            return {
-                "status": "error",
-                "success": False,
-                "error": f"Failed to create backup before writing: {str(exc)}",
-                "file_path": canonical_path,
-            }
-
     try:
         content_bytes = content.encode("utf-8")
-        temp_file = tempfile.NamedTemporaryFile(
-            mode="wb", dir=parent_dir, delete=False, prefix=".guardian_tmp_"
-        )
-        temp_path = temp_file.name
-        try:
-            temp_file.write(content_bytes)
-            temp_file.flush()
-            os.fsync(temp_file.fileno())
-            temp_file.close()
-            if existing_file:
-                try:
-                    os.chmod(temp_path, os.stat(canonical_path).st_mode)
-                except OSError:
-                    pass
-            os.replace(temp_path, canonical_path)
-        except Exception:
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
-            raise
+        backup_path, is_new = atomic_replace(canonical_path, content_bytes, backup=backup, limit=MAX_FILE_WRITE_BYTES)
 
         return {
             "status": "ok",
@@ -263,7 +222,7 @@ def atomic_write_file(
             "file_path": canonical_path,
             "bytes_written": len(content_bytes),
             "size_human": _format_bytes(len(content_bytes)),
-            "is_new_file": not existing_file,
+            "is_new_file": is_new,
             "backup_created": backup_path,
             "message": "File written atomically and successfully.",
         }
