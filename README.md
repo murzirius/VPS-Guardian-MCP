@@ -36,13 +36,13 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.27.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.28.0
 ```
 
 For development from source instead:
 
 ```bash
-git clone --branch v0.27.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+git clone --branch v0.28.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
 cd /opt/vps-guardian-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -80,7 +80,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.27.0",
+        "@murzirius/vps-guardian-mcp@0.28.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -109,7 +109,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.27.0
+@murzirius/vps-guardian-mcp@0.28.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -129,7 +129,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.27.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.28.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.
@@ -173,6 +173,7 @@ VPS Guardian is built around a few workflows instead of a long, unstructured com
 - **Recover deliberately:** create baselines, compare drift, produce repair plans, verify isolated backups and require exact confirmation for changes.
 - **Work with code:** read a large file by line range, find Python symbols, stage a line edit, inspect a bounded Git diff and check a staged change in a temporary Docker capsule.
 - **Understand an environment:** inspect project venv metadata, compare direct dependencies and npm lock versions, and identify a running systemd service's launch path without executing project code.
+- **Navigate Python code:** map local imports, find symbol-use candidates, inspect likely change impact and gather short task context with related test candidates.
 
 For smaller agent context, `--tool-profile core` exposes the everyday tools (including Agent Jobs); omit the flag or choose `full` for the complete catalogue. The launcher passes this profile to the server over SSH. Both profiles support compact JSON tool results, while new workload and log summaries return short answers by default. The profile takes effect when the MCP connection starts.
 
@@ -187,6 +188,12 @@ Capsules require a **local Linux Docker daemon**, an already-downloaded image (`
 **Environment Doctor:** Ask the agent to call `inspect_project_environment(project_path, service_name="bot.service")`, then `diagnose_project_dependencies` for a focused problem report. It reads `pyvenv.cfg`, Python `.dist-info/METADATA`, static `pyproject.toml`/`requirements.txt` declarations, and direct npm dependencies against a v2/v3 `package-lock.json`. If both `.venv` and `venv` exist, supply an explicit authorized `environment_path`. `include_dev=true` includes npm development dependencies. Reuse `after_fingerprint` to receive only an `unchanged` reply when the relevant report has not changed. A dependency name is a distribution name, not necessarily its Python import name.
 
 `plan_environment_repair` explains the next steps without installing packages or restarting anything. `plan_capsule_environment` prepares bounded direct dependency pins and runtime metadata for a reviewed local Capsule image; **it does not build or download that image, verify its contents, or produce a complete transitive lockfile**. Python versions come from venv metadata; running service evidence is limited to a Linux systemd MainPID. Stopped units, wrappers, containers, system Python without an authorized venv, inherited/legacy/editable packages, dynamic declarations, requirement directives, URLs, extras and unsupported npm locks may need separate review. Metadata is not proof that an import works, and Node runtime/engine compatibility is not probed. Reads are capped at 2 MB per report, 1,000 directory entries and 100 direct declarations per ecosystem; incomplete scans never report a clean result. No project interpreter, installer, npm script, package index or background worker is started.
+
+**Code Navigator:** Start with `get_project_import_map(project_path, relative_path="app/payments.py")`, or use `get_project_task_context(project_path, relative_path="app/payments.py", symbol_name="charge")` to get a definition, short use-site fragments and related test candidates in one bounded answer. `find_project_references` distinguishes import-alias candidates from weaker name-only matches. `assess_project_change` follows reverse imports for up to three hops; test files are selected by import relationships and naming conventions, not measured coverage. For a class method use its exact qualified name, such as `Gateway.refund`; `get_project_symbols` helps choose it. All four tools accept `after_fingerprint` for compact unchanged replies; changing query arguments changes the fingerprint. No scan results are cached, so an unchanged reply saves output tokens but still requires a fresh scan.
+
+No setup is needed beyond configured project roots. Navigator supports UTF-8 Python sources and bounded ASCII symbol names, including relative imports and common `src/` layouts. Snippets are limited to one line; literals (including f-strings/template strings) and comments are masked. File, module and identifier names remain visible; use existing range reads for exact source bodies. This is **not a runtime call graph, complete dependency analysis or proof that tests cover a change**: alias shadowing, ambiguous modules, dynamic imports/reflection, instance types and non-Python/generated sources remain uncertain. Hidden, sensitive and dependency paths are excluded. Unreadable files, unsafe paths, syntax errors and exhausted budgets are reported as partial scans.
+
+Scans are on demand, with no background indexer or disk cache: at most 150 Python files (60 on constrained hosts), 128 KB per file, 2 MB total (750 KB constrained), 1,000 directory entries, eight directory levels and a five-second cooperative scan deadline. AST nodes and extracted facts are capped; files with more than 200 import aliases are skipped. Below 96 MiB available memory, no scan starts. Only one scan per MCP process runs at a time. Separate MCP processes do not share this lock. Reference/import reports return at most 50 entries; task context defaults to 6,000 characters and can be capped between 2,000 and 8,000.
 
 Examples of native MCP tools:
 

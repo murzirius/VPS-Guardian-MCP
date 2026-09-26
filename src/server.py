@@ -220,6 +220,12 @@ try:
         plan_environment_repair as _plan_environment_repair,
         plan_capsule_environment as _plan_capsule_environment,
     )
+    from src.code_navigator import (
+        get_project_import_map as _get_project_import_map,
+        find_project_references as _find_project_references,
+        assess_project_change as _assess_project_change,
+        get_project_task_context as _get_project_task_context,
+    )
 except ImportError:
     from monitor import (
         check_service_status as _check_service_status,
@@ -400,6 +406,12 @@ except ImportError:
         plan_environment_repair as _plan_environment_repair,
         plan_capsule_environment as _plan_capsule_environment,
     )
+    from code_navigator import (
+        get_project_import_map as _get_project_import_map,
+        find_project_references as _find_project_references,
+        assess_project_change as _assess_project_change,
+        get_project_task_context as _get_project_task_context,
+    )
 
 try:
     from src.agent_efficiency import (
@@ -455,6 +467,7 @@ _CORE_TOOLS = {
     "get_test_capsule_status", "test_project_patch", "promote_tested_project_patch",
     "inspect_project_environment", "diagnose_project_dependencies",
     "plan_environment_repair", "plan_capsule_environment",
+    "get_project_import_map", "find_project_references", "assess_project_change", "get_project_task_context",
     "get_workload_brief", "summarize_service_logs", "get_server_event_delta", "get_guardian_launch",
     "start_agent_session", "get_agent_session", "record_session_finding", "handoff_agent_session",
     "get_recent_server_events", "get_event_watch", "open_event_watch",
@@ -1280,6 +1293,30 @@ def plan_environment_repair(project_path: str, service_name: Optional[str] = Non
 def plan_capsule_environment(project_path: str, environment_path: Optional[str] = None, include_dev: bool = False) -> str:
     """Prepare reviewed runtime/dependency metadata for a capsule image; this does not build, download or verify the image."""
     return json.dumps(_plan_capsule_environment(project_path, environment_path, include_dev), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def get_project_import_map(project_path: str, relative_path: Optional[str] = None, max_results: int = 30, after_fingerprint: Optional[str] = None) -> str:
+    """Map bounded local Python import candidates; unresolved modules and partial scans are explicit."""
+    return json.dumps(_get_project_import_map(project_path, relative_path, max_results, after_fingerprint), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def find_project_references(project_path: str, relative_path: str, symbol_name: str, max_results: int = 30, after_fingerprint: Optional[str] = None) -> str:
+    """Find Python symbol-use candidates, distinguishing import aliases from name-only matches; never executes code."""
+    return json.dumps(_find_project_references(project_path, relative_path, symbol_name, max_results, after_fingerprint), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def assess_project_change(project_path: str, relative_path: str, symbol_name: Optional[str] = None, max_results: int = 20, after_fingerprint: Optional[str] = None) -> str:
+    """Find reverse-import impact and related test candidates within three hops; not runtime or coverage proof."""
+    return json.dumps(_assess_project_change(project_path, relative_path, symbol_name, max_results, after_fingerprint), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def get_project_task_context(project_path: str, relative_path: str, symbol_name: str, max_chars: int = 6000, after_fingerprint: Optional[str] = None) -> str:
+    """Bundle a Python definition, use-site fragments and test candidates; mask literals/comments and cap output."""
+    return json.dumps(_get_project_task_context(project_path, relative_path, symbol_name, max_chars, after_fingerprint), separators=(",", ":"), ensure_ascii=False)
 
 
 @guardian_tool()

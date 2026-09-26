@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.28.0] - 2026-09-26
+
+### Added
+- Code Navigator maps local Python imports, distinguishes alias/name-only symbol-use candidates, and finds reverse-import impact and related test candidates within three hops.
+- Task context bundles a definition, masked one-line use sites, test candidates and an exact range-read suggestion. Query-specific fingerprints suppress repeated unchanged reports in all four tools.
+- Relative imports, import aliases, nested/async definitions and common `src/` layouts are supported; ambiguous modules and dynamic code remain explicitly uncertain.
+
+### Safety and resource limits
+- Never imports/executes project code, starts a daemon, writes an index or runs tests. Hidden, sensitive and dependency paths are excluded; literals/comments in snippets are masked.
+- Authorized roots, safe bounded reads, file/byte/entry/depth/AST/fact/time budgets, adaptive small-VPS limits and a per-process scan lock bound work. Memory below 96 MiB refuses scanning; partial scans never claim completeness within the scan policy.
+- Static candidates are not a runtime call graph, test coverage proof or full multi-language analysis. Exact source bodies remain a separate bounded read; module/identifier/file names remain visible.
+
+---
+
 ## [0.27.0] - 2026-09-26
 
 ### Added
