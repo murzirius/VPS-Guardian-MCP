@@ -54,6 +54,17 @@ class TestAgentJobs(unittest.TestCase):
         self.assertEqual(agent_jobs.create_agent_job("An incident", ["service_status"], "nginx; shutdown")["status"], "error")
         self.assertEqual(agent_jobs.create_agent_job("An incident", ["runtime_budget"], ttl_hours=True)["status"], "error")
 
+    def test_operator_zero_concurrency_blocks_checks_and_verification(self):
+        job_id = self._job()
+        with mock.patch("src.agent_jobs.get_runtime_budget", return_value={"profile": "standard", "limits": {"agent_job_concurrency": 0}}), mock.patch("src.agent_jobs._run_check") as check, mock.patch("src.agent_jobs.check_service_status") as verify:
+            self.assertEqual(agent_jobs.advance_agent_job(job_id)["status"], "resource_limited")
+            with agent_jobs._transaction() as connection:
+                job = agent_jobs._load(connection, job_id)
+                job["status"] = "verification_pending"
+                agent_jobs._save(connection, job)
+            self.assertEqual(agent_jobs.verify_agent_job_recovery(job_id)["status"], "resource_limited")
+            check.assert_not_called(); verify.assert_not_called()
+
     def test_expired_read_only_lease_can_retry_after_reconnect(self):
         job_id = self._job()
         with agent_jobs._transaction() as connection:

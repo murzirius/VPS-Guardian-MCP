@@ -6,6 +6,8 @@ from mcp.server.fastmcp import FastMCP
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import access_policy, safety
+from src.resource_policy import get_workspace_settings, save_workspace_settings
+from src.operator_projects import list_operator_projects, inspect_operator_project
 
 if os.environ.get("PANEL_TEST_POLICY_DIR"):
     access_policy.policy_directory = lambda: os.environ["PANEL_TEST_POLICY_DIR"]
@@ -49,6 +51,11 @@ def get_access_policy() -> dict:
 def save_access_policy(policy: dict, expected_revision: str) -> dict:
     return access_policy.save_access_policy(policy, expected_revision)
 
+
+mcp.tool()(get_workspace_settings)
+mcp.tool()(save_workspace_settings)
+mcp.tool()(list_operator_projects)
+mcp.tool()(inspect_operator_project)
 
 if __name__ == "__main__":
     mcp.run()

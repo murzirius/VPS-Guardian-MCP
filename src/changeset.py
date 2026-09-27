@@ -131,6 +131,9 @@ def apply_change_set(change_set_id: str, confirmation_token: Optional[str] = Non
     with _lock:
         item = _active(change_set_id)
         if not item: return {"status": "not_found", "success": False, "error": "ChangeSet is missing, expired, or already used."}
+        limits = get_runtime_budget()["limits"]
+        if len(item["files"]) > limits["changeset_files"] or sum(len(entry["content"].encode()) for entry in item["files"]) > limits["changeset_total_bytes"]:
+            return {"status": "resource_limited", "success": False, "error": "ChangeSet exceeds current server limits. Prepare a smaller ChangeSet."}
         parameters = _parameters(item)
         auth = request_authorization("apply_change_set", parameters, "Apply bounded web-server configuration changes, validate, reload, and roll back on failure.", confirmation_token)
         if auth is not None: return auth

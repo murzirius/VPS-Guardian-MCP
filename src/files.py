@@ -42,7 +42,9 @@ _SECRET_NAME = r"[A-Za-z0-9_.-]*(?:password|passwd|requirepass|masterauth|secret
 _SENSITIVE_CONFIG_VALUE = re.compile(rf"(?im)^([ \t]*[+-]?[ \t]*(?:export\s+)?(?:{_SECRET_NAME}|key)\s*[:=]\s*)([^\r\n]+)")
 _JSON_CONFIG_VALUE = re.compile(rf'''(?i)(["'](?:{_SECRET_NAME}|key)["']\s*:\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,}}\]\r\n]+)''')
 _DIRECTIVE_CONFIG_VALUE = re.compile(rf"(?im)^([ \t]*[+-]?[ \t]*(?:{_SECRET_NAME}|key)\s+)([^\r\n]+)")
-_URL_CREDENTIALS = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)([^\s/@]+)(@)")
+# Start at the literal delimiter: searching for an unbounded scheme at every
+# character was quadratic on long generated/minified source lines.
+_URL_CREDENTIALS = re.compile(r"(://)([^\s/@]+)(@)")
 MAX_FILE_WRITE_BYTES = 2 * 1024 * 1024
 MAX_DIRECTORY_ITEMS = 5000
 

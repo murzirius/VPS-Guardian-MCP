@@ -10,6 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.31.0] - 2026-09-27
+
+### Added
+- English local operator panel sections: Access, Projects and Limits. Bounded project metadata discovery/inspection, policy visibility and an explicit project-root draft flow; browsing never changes agent permissions.
+- Shared private server-side resource settings with Auto, Small VPS, Standard and Custom profiles, validated integer ranges, atomic saves and revision conflicts. Show requested and effective budgets separately; automatic host protection always applies.
+- Limits enforced for project reads/searches/patches, tool/resource JSON, existing HTTP/directory/journal/ChangeSet budgets, Agent Job checks and capsule availability. New operator helper operations are not ordinary agent tools.
+
+### Fixes and boundaries
+- Recheck revoked project roots and reduced budgets on cached patch preview/staging/testing/apply; recheck configuration ChangeSet budgets before apply. Bound code-search directory traversal and input reads.
+- Avoid quadratic secret-redaction scans on long generated source lines. Oversized MCP JSON stays valid, preserves small status/IDs/tokens where possible and marks omitted fields without repeating mutations.
+- Preserve local drafts, require explicit Apply, and retain local bearer/Host/Origin protections for all new routes. Integration tests cover real SDK transport, live limits, concurrent edits and metadata-only scans.
+- Upgrade all agent server environments to 0.31.0+ and reconnect once. Limits are cooperative, not global CPU/RAM quotas, OS isolation or independent human approval; in-flight work is not cancelled.
+
+---
+
 ## [0.30.0] - 2026-09-27
 
 ### Added

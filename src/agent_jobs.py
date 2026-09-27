@@ -277,7 +277,10 @@ def advance_agent_job(job_id: str, session_id: Optional[str] = None, background:
                 return {"status": "resource_limited", "profile": budget["profile"], "error": "Detached checks require at least 512 MB available memory; use synchronous mode instead."}
             rows = connection.execute("SELECT record FROM jobs").fetchall()
             active = sum(1 for (raw,) in rows if (other := json.loads(raw)).get("status") in {"running", "verifying"} and other.get("lease_expires_at") and other["lease_expires_at"] > _iso())
-            if active >= (1 if budget["profile"] != "standard" else 2):
+            concurrency = budget.get("limits", {}).get("agent_job_concurrency", 1 if budget["profile"] != "standard" else 2)
+            if concurrency == 0:
+                return {"status": "resource_limited", "error": "Agent Job checks are disabled by operator limits."}
+            if active >= concurrency:
                 return {"status": "busy", "error": "Agent Jobs concurrency budget is full; retry later."}
             lease_id = secrets.token_hex(8)
             step["attempts"] += 1
@@ -498,6 +501,14 @@ def verify_agent_job_recovery(job_id: str) -> Dict[str, Any]:
                 _save(connection, job)
             if job["status"] != "verification_pending":
                 return {"status": job["status"], "error": "No executed recovery awaits verification."}
+            budget = get_runtime_budget()
+            concurrency = budget.get("limits", {}).get("agent_job_concurrency", 1 if budget["profile"] != "standard" else 2)
+            if concurrency == 0:
+                return {"status": "resource_limited", "error": "Agent Job checks are disabled by operator limits."}
+            rows = connection.execute("SELECT record FROM jobs").fetchall()
+            active = sum(1 for (raw,) in rows if (other := json.loads(raw)).get("status") in {"running", "verifying"} and other.get("lease_expires_at") and other["lease_expires_at"] > _iso())
+            if active >= concurrency:
+                return {"status": "busy", "error": "Agent Jobs concurrency budget is full; retry later."}
             lease_id = secrets.token_hex(8)
             job["status"] = "verifying"
             job["lease_id"] = lease_id

@@ -34,14 +34,14 @@ The English-language panel runs **on your computer, not on the VPS or this proje
 With [uv](https://docs.astral.sh/uv/) installed on your computer:
 
 ```bash
-uvx --from vps-guardian-mcp==0.30.0 vps-guardian-panel
+uvx --from vps-guardian-mcp==0.31.0 vps-guardian-panel
 ```
 
 Without uv, install in a local virtual environment. Windows PowerShell:
 
 ```powershell
 py -m venv .guardian-panel
-.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.30.0
+.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.31.0
 .\.guardian-panel\Scripts\python.exe -m src.local_panel
 ```
 
@@ -49,16 +49,16 @@ Linux/macOS:
 
 ```bash
 python3 -m venv .guardian-panel
-.guardian-panel/bin/pip install vps-guardian-mcp==0.30.0
+.guardian-panel/bin/pip install vps-guardian-mcp==0.31.0
 .guardian-panel/bin/vps-guardian-panel
 ```
 
-The browser opens automatically. Enter the VPS address, SSH user, port and **path** to your local key, not its contents. Leave the key field empty to use ssh-agent; load encrypted keys into the agent beforehand. Advanced settings accept the Guardian executable path on the VPS and an optional local known_hosts file. Permission management requires Guardian **0.30.0+ on the VPS**, with the adjacent `vps-guardian-access` executable from the same installation. Older compatible installations can show monitoring only, with an upgrade warning. No server-side web service is installed.
+The browser opens automatically. Enter the VPS address, SSH user, port and **path** to your local key, not its contents. Leave the key field empty to use ssh-agent; load encrypted keys into the agent beforehand. Advanced settings accept the Guardian executable path on the VPS and an optional local known_hosts file. Access management requires Guardian **0.30.0+ on the VPS**; Projects and Limits require **0.31.0+**, with the adjacent `vps-guardian-access` executable from the same installation. Older compatible installations can show monitoring only, with an upgrade warning. No server-side web service is installed.
 
 To upgrade an existing pip installation on the VPS:
 
 ```bash
-/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.30.0
+/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.31.0
 ```
 
 Upgrade any other Guardian environments used by your agents, then reconnect **all agents once** so they start the policy-aware server. Subsequent permission changes affect new calls in those sessions without a restart. In-flight operations are not cancelled, and cached client tool lists may still show disabled tools; calls to those tools are rejected.
@@ -71,6 +71,22 @@ Use **Apply permissions** to save a shared per-SSH-user policy on the VPS at `~/
 - **Project roots:** inherit each process's `VPS_GUARDIAN_PROJECT_ROOTS`, or replace it with up to 16 absolute VPS directory paths, one per line. An empty custom list blocks project workspaces. Filesystem roots and symlink roots are rejected. This controls project tools, not the separate fixed configuration-file directory whitelist.
 
 The operator helper is **not registered as an ordinary agent tool**. Tools and the three read resources enforce access restrictions on the server. Policies apply to upgraded Guardian processes under the **same SSH user**, not to individually authenticated agent identities. An agent with independent root SSH access, the same account's shell, or permission to change Guardian's code can bypass this MCP boundary. For stronger separation use a restricted dedicated OS account; do not treat the panel as a sandbox or independent approval service.
+
+#### Projects and live Limits
+
+The **Access**, **Projects** and **Limits** sections require the current Python package on your computer. Projects and Limits additionally require **Guardian 0.31.0+ on the VPS**. A 0.30.0 server can still manage Access, but cannot enforce these new limits. Upgrade every server environment used by your agents and reconnect once; changing saved limits afterwards does not require another restart.
+
+In **Projects**, click **Find projects** for a bounded metadata scan inside the current roots (at most 1,000 entries, 100 directories, 50 projects and a cooperative two-second deadline). Select a project or enter an absolute VPS path and click **Inspect metadata**. The panel shows top-level file/directory metadata, OS readability and policy decisions for common project tools, without reading source, invoking Git or executing project code. Links and sensitive/hidden names are excluded. Missing projects can be outside the roots, lack recognized markers or exceed the scan budget. When roots are inherited, the helper's launch defaults may differ from an agent's environment; use explicit managed roots for a shared boundary.
+
+**Use as the only project root** only prepares a draft in Access. Review and click **Apply permissions** to replace the current roots with that single project. Browsing alone never grants or changes agent access. Policy allowance is not a guarantee that an agent's launch mode, roots or OS permissions permit an operation.
+
+In **Limits**, choose **Auto**, **Small VPS**, **Standard** or **Custom**, then **Apply limits**. Values persist in the same private operator directory as `limits.json`, separately from `policy.json`. Revision checks reject concurrent edits. Auto and Standard currently request the same normal budgets; both retain automatic host guards. Small VPS requests smaller reads/searches, one-file patches and no Test Capsules. Custom accepts only the displayed integer ranges; it cannot disable guards or exceed hard ceilings. **Reload live limits** fetches a fresh server snapshot; it asks before discarding a local draft.
+
+The table distinguishes **Requested** values from **Effective on VPS** values. Orange effective values have been reduced by host protection. The applied settings, not an unsaved draft, determine effective limits. Available memory below 512 MiB or one logical CPU reduces several budgets; below 384 MiB capsules are disabled; below 256 MiB additional critical-load restrictions apply. These are cooperative per-operation budgets, **not a global CPU/RAM quota or OS sandbox**. They do not cancel already running work. Every upgraded process under the same SSH user reads shared settings for subsequent operations. Invalid/unsafe limits use conservative Small VPS defaults and show an error; unsafe ownership/permissions or links may need manual repair.
+
+Editable budgets cover project-file reads (up to 300,000 bytes when host guards permit), MCP tool/resource JSON, HTTP diagnostic bodies, directory entries, journal lines, code-search file/input budgets, project-patch file/staged-text budgets, configuration ChangeSet file/text budgets, Agent Job check concurrency (0 disables checks) and Test Capsules (0 disables, 1 permits). Existing stricter operation-specific bounds still apply. Capsule RAM/CPU/timeout/output bounds remain fixed, not editable. Resource response limits apply to each JSON document; MCP transport encoding and text/structured duplication add overhead. Large fields are omitted with `response_truncated` and `omitted_fields`, retaining small status/IDs/tokens where possible. **A mutation has already returned: do not repeat it just to obtain omitted output.** Request a narrower read or status instead.
+
+Cached project patches recheck current roots and resource limits before preview, staging, testing and applying. A revoked or over-budget candidate must be replaced with an allowed, smaller patch. Configuration ChangeSets also recheck live limits before applying.
 
 SSH host-key verification is mandatory. Verify the fingerprint independently and connect once with ordinary SSH before using the panel. The dashboard does not accept unknown keys or use custom SSH config/aliases, ProxyCommand or jump hosts: enter a directly reachable IP/hostname. A changed host key must be investigated, not bypassed.
 
@@ -87,13 +103,13 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.30.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.31.0
 ```
 
 For development from source instead:
 
 ```bash
-git clone --branch v0.30.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+git clone --branch v0.31.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
 cd /opt/vps-guardian-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -131,7 +147,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.30.0",
+        "@murzirius/vps-guardian-mcp@0.31.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -160,7 +176,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.30.0
+@murzirius/vps-guardian-mcp@0.31.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -180,7 +196,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.30.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.31.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.

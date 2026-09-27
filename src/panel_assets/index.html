@@ -24,7 +24,8 @@
 </aside>
 <section class="dashboard" aria-label="MCP access management">
 <div class="card server-card"><div class="server-icon">▤</div><div class="server-title"><h2 id="server-name">No server connected</h2><p id="server-detail" class="muted small">Enter your connection details on the left</p></div><span id="connection-status" class="status">Disconnected</span></div>
-<section class="card access-card">
+<nav class="panel-nav" aria-label="Operator sections"><button type="button" data-section="access" aria-pressed="true">Access</button><button type="button" data-section="projects" aria-pressed="false">Projects</button><button type="button" data-section="limits" aria-pressed="false">Limits</button></nav>
+<section id="section-access" class="card access-card">
 <div class="section-top"><h2>MCP Access</h2><span id="access-badge" class="small-tag">Not loaded</span></div>
 <p id="access-help" class="muted small">Connect to Guardian 0.30.0+ to load the server-side access policy.</p>
 <div id="access-message" class="notice" role="status" hidden></div>
@@ -46,6 +47,30 @@
 </form>
 <p id="policy-save-state" class="muted small" aria-live="polite">No policy loaded.</p>
 <p class="boundary-note">Policy is saved on the VPS and shared by upgraded Guardian processes running as this SSH user. Older agents must upgrade and reconnect once. This is an MCP boundary, not isolation from root SSH or server-code access.</p>
+</section>
+<section id="section-projects" class="card access-card" hidden>
+<div class="section-top"><h2>Projects</h2><button id="reload-projects" type="button" class="refresh" disabled>Find projects</button></div>
+<p class="muted small">Explore project metadata inside the configured roots. No source is read and no project commands are executed.</p>
+<div id="projects-message" class="notice" role="status" hidden></div>
+<p id="projects-roots" class="field-help">Connect to Guardian 0.31.0+ on the VPS to browse projects.</p>
+<label for="project-picker">Discovered projects</label><select id="project-picker" disabled><option value="">Run Find projects first</option></select>
+<label for="project-path">Project directory <span class="optional">absolute VPS path</span></label><input id="project-path" placeholder="/home/bot" maxlength="1024" spellcheck="false" disabled>
+<div class="policy-actions"><button id="inspect-project" type="button" class="refresh" disabled>Inspect metadata</button><button id="use-project" type="button" class="refresh" disabled>Use as the only project root</button></div>
+<p class="boundary-note">Selecting or inspecting a project does not change agent permissions. Use as root prepares an Access draft; review and Apply permissions there. Explicit managed roots are shared; inherited roots may differ between agent launch environments.</p>
+<div id="project-details" class="metadata"><p class="muted small">No project selected.</p></div>
+</section>
+<section id="section-limits" class="card access-card" hidden>
+<div class="section-top"><h2>Resource limits</h2><span id="limits-badge" class="small-tag">Not loaded</span></div>
+<p class="muted small">Shared, server-enforced budgets for subsequent operations. Host protection always applies, including with Standard and Custom profiles.</p>
+<div id="limits-message" class="notice" role="status" hidden></div>
+<form id="limits-form"><fieldset id="limits-fields" disabled>
+<label for="limits-profile">Profile</label><select id="limits-profile"><option value="auto">Auto — launch defaults with host guards</option><option value="small">Small VPS — smaller reads and searches, no capsules</option><option value="standard">Standard — normal budgets with host guards</option><option value="custom">Custom — set each budget</option></select>
+<p class="field-help">Auto and Standard currently request the same budgets. They are not CPU/RAM quotas. Reduce output to save tokens; raise project reads up to 300,000 bytes only when host guards permit.</p>
+<div class="limit-heading"><span>Operation</span><span>Requested</span><span>Effective on VPS</span></div><div id="limits-list"></div>
+</fieldset><div class="policy-actions"><button id="apply-limits" type="submit" class="primary" disabled>Apply limits <span>→</span></button><button id="reload-limits" type="button" class="refresh" disabled>Reload live limits</button></div></form>
+<p id="limits-save-state" class="muted small" aria-live="polite">Connect to Guardian 0.31.0+ to load limits.</p>
+<p id="limits-host" class="boundary-note"></p>
+<p class="boundary-note">Capsule isolation stays fixed: 128 MiB RAM, 0.5 CPU, 30 seconds, 4 KiB output. These cooperative limits do not impose a global CPU/RAM quota, cancel in-flight operations or constrain ordinary SSH. Upgrade every agent's server executable to 0.31.0+ and reconnect once.</p>
 </section>
 <details class="monitoring"><summary>Server overview <span class="muted small">optional · read-only · 30s refresh</span></summary>
 <div class="metrics">

@@ -147,7 +147,9 @@ def _policy_lock():
 
 def get_access_policy() -> dict[str, Any]:
     from src import __version__
+    from src.resource_policy import get_workspace_settings
     return {"status": "ok", **load_policy(), "catalog": list(tool_catalog()), "version": __version__,
+            "workspace_settings_supported": True, "workspace": get_workspace_settings(),
             "scope": "All upgraded Guardian MCP processes running as this SSH user.",
             "human_approval_enforced": False, "os_isolation": False}
 
@@ -177,6 +179,12 @@ def main():
     server = FastMCP("VPS-Guardian-Operator-Access")
     server.tool()(get_access_policy)
     server.tool()(save_access_policy)
+    from src.resource_policy import get_workspace_settings, save_workspace_settings
+    from src.operator_projects import list_operator_projects, inspect_operator_project
+    server.tool()(get_workspace_settings)
+    server.tool()(save_workspace_settings)
+    server.tool()(list_operator_projects)
+    server.tool()(inspect_operator_project)
     server.run()
 
 

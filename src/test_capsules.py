@@ -92,6 +92,8 @@ def _preflight(check: str) -> tuple[Optional[str], Optional[str]]:
     if not sys.platform.startswith("linux") or fcntl is None:
         return None, "Test Capsules require Linux and flock; no host execution fallback is available."
     budget = get_runtime_budget()
+    if budget.get("limits", {}).get("capsule_concurrency", 1) == 0:
+        return None, "Test Capsules are disabled by operator limits or host resource guards."
     if budget["available_memory_bytes"] < MIN_AVAILABLE_MEMORY:
         return None, "At least 384 MiB of available memory is required for a capsule."
     if shutil.disk_usage(tempfile.gettempdir()).free < MIN_AVAILABLE_DISK:
@@ -331,7 +333,7 @@ def _run_container(docker: str, image: str, snapshot: str, command: list[str]) -
 
 def get_test_capsule_status() -> Dict[str, Any]:
     """Report prerequisites without pulling images or running project code."""
-    return {"status": "ok", "linux": sys.platform.startswith("linux") and fcntl is not None, "docker_cli": bool(shutil.which("docker")), "available_memory_bytes": get_runtime_budget()["available_memory_bytes"], "checks": sorted(CHECKS), "limits": {"snapshot_files": MAX_SNAPSHOT_FILES, "snapshot_directories": MAX_SNAPSHOT_DIRS, "snapshot_entries": MAX_SNAPSHOT_ENTRIES, "snapshot_bytes": MAX_SNAPSHOT_BYTES, "container_memory_bytes": 128 * 1024 * 1024, "timeout_seconds": CHECK_TIMEOUT_SECONDS, "concurrent_capsules": 1}, "note": "Images must already be local. No source project is mounted; no network or production environment is passed."}
+    return {"status": "ok", "linux": sys.platform.startswith("linux") and fcntl is not None, "docker_cli": bool(shutil.which("docker")), "available_memory_bytes": get_runtime_budget()["available_memory_bytes"], "checks": sorted(CHECKS), "limits": {"snapshot_files": MAX_SNAPSHOT_FILES, "snapshot_directories": MAX_SNAPSHOT_DIRS, "snapshot_entries": MAX_SNAPSHOT_ENTRIES, "snapshot_bytes": MAX_SNAPSHOT_BYTES, "container_memory_bytes": 128 * 1024 * 1024, "timeout_seconds": CHECK_TIMEOUT_SECONDS, "concurrent_capsules": get_runtime_budget()["limits"]["capsule_concurrency"]}, "note": "Images must already be local. No source project is mounted; no network or production environment is passed."}
 
 
 def test_project_patch(patch_id: str, check: str = "auto", confirmation_token: Optional[str] = None) -> Dict[str, Any]:
@@ -343,6 +345,11 @@ def test_project_patch(patch_id: str, check: str = "auto", confirmation_token: O
         item = _patches.get(patch_id)
         if not item or item["state"] != "staging" or not item["files"]:
             return {"status": "not_found", "error": "An active staged project patch is required."}
+        try:
+            from src.project_workspace import _patch_policy_error
+        except ImportError:
+            from project_workspace import _patch_policy_error
+        if error := _patch_policy_error(item): return error
         selected = _check_name(item, check)
         if selected is None:
             return {"status": "error", "error": "auto requires staged source in one language (Python or JavaScript); choose an explicit check otherwise."}

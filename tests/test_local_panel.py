@@ -41,6 +41,9 @@ class FakeController:
     def policy_request(self, data=None):
         self.calls.append(("policy", data))
 
+    def workspace_request(self, name, data):
+        self.calls.append((name, data))
+
 
 class TestPanelHTTP(unittest.TestCase):
     def setUp(self):
@@ -106,7 +109,7 @@ class TestPanelHTTP(unittest.TestCase):
         self.assertFalse(self.controller.calls)
 
     def test_operator_endpoints_require_token_and_same_origin(self):
-        for path in ("/api/policy", "/api/policy/reload"):
+        for path in ("/api/policy", "/api/policy/reload", "/api/limits", "/api/limits/reload", "/api/projects/reload", "/api/projects/inspect"):
             self.assertEqual(self.request("POST", path, {}, {**self.auth(), "Authorization": "Bearer invalid"})[0], 401)
             self.assertEqual(self.request("POST", path, {}, {**self.auth(), "Origin": "https://evil.example"})[0], 403)
         self.assertFalse(self.controller.calls)
@@ -118,6 +121,9 @@ class TestPanelHTTP(unittest.TestCase):
         self.assertIn('lang="en"', html)
         self.assertLess(html.index("MCP Access</h2>"), html.index("Server overview"))
         self.assertIn("Apply permissions", html)
+        self.assertIn('data-section="projects"', html)
+        self.assertIn('data-section="limits"', html)
+        self.assertIn("Effective on VPS", html)
         for path in ("/", "/app.js"):
             self.assertNotRegex(self.request(path=path)[2].decode(), r"[А-Яа-яёЁ]")
 

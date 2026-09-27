@@ -29,7 +29,7 @@ from mcp.client.stdio import stdio_client
 
 DEFAULT_REMOTE = "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp"
 ALLOWED_TOOLS = frozenset({"get_safety_status", "get_system_health", "get_failed_systemd_units"})
-ADMIN_TOOLS = frozenset({"get_access_policy", "save_access_policy"})
+ADMIN_TOOLS = frozenset({"get_access_policy", "save_access_policy", "get_workspace_settings", "save_workspace_settings", "list_operator_projects", "inspect_operator_project"})
 POLL_SECONDS = 30
 REQUEST_TIMEOUT = 20
 MAX_BODY = 8192
@@ -215,7 +215,9 @@ class PanelController:
         self.policy_job = None
         self.state: dict[str, Any] = {"connection": "disconnected", "snapshot": None, "error": None,
                                      "updated_at": None, "poll_seconds": POLL_SECONDS, "read_only": True,
-                                     "access": None, "access_error": None, "access_supported": False, "policy_busy": False}
+                                     "access": None, "access_error": None, "access_supported": False, "policy_busy": False,
+                                     "workspace": None, "workspace_supported": False, "workspace_error": None,
+                                     "projects": None, "project": None, "projects_error": None}
 
     def status(self):
         with self.lock:
@@ -234,6 +236,7 @@ class PanelController:
             self.policy_job = None
             self.state.update(connection="connecting", snapshot=None, error=None, updated_at=None,
                               access=None, access_error=None, access_supported=False, policy_busy=False,
+                              workspace=None, workspace_supported=False, workspace_error=None, projects=None, project=None, projects_error=None,
                               target={"host": config["host"], "user": config["user"], "port": config["port"]})
             self.thread = threading.Thread(target=self._worker, args=(params, admin_params), daemon=True)
             self.thread.start()
@@ -243,7 +246,8 @@ class PanelController:
             self.stop.set()
             self.policy_job = None
             self.state.update(connection="disconnecting" if self.thread and self.thread.is_alive() else "disconnected",
-                              snapshot=None, updated_at=None, error=None, access=None, policy_busy=False)
+                              snapshot=None, updated_at=None, error=None, access=None, policy_busy=False,
+                              workspace=None, workspace_supported=False, projects=None, project=None)
 
     def policy_request(self, data=None):
         if data is not None:
@@ -278,6 +282,33 @@ class PanelController:
             self.last_refresh = time.monotonic()
             self.refresh_requested.set()
 
+    def workspace_request(self, name, data):
+        if name not in ADMIN_TOOLS - {"get_access_policy", "save_access_policy"}:
+            raise PanelInputError("Unsupported operator operation.")
+        if name == "save_workspace_settings":
+            from src.resource_policy import validate_settings
+            if not isinstance(data, dict) or set(data) != {"settings", "expected_revision"}:
+                raise PanelInputError("Supply settings and expected_revision only.")
+            try:
+                validate_settings(data["settings"])
+            except (ValueError, TypeError):
+                raise PanelInputError("Invalid profile or limit values.") from None
+            if not isinstance(data["expected_revision"], str) or len(data["expected_revision"]) > 64:
+                raise PanelInputError("Invalid limits revision.")
+        elif name == "inspect_operator_project":
+            if not isinstance(data, dict) or set(data) != {"project_path"} or not isinstance(data["project_path"], str) or not data["project_path"] or len(data["project_path"]) > 1024 or any(ord(c) < 32 for c in data["project_path"]):
+                raise PanelInputError("Supply one absolute project directory.")
+        elif data != {}:
+            raise PanelInputError("This operation takes no arguments.")
+        with self.lock:
+            if self.state["connection"] != "connected" or not self.state["workspace_supported"]:
+                raise RuntimeError("Upgrade Guardian on the VPS to 0.31.0+ and reconnect before using Projects and Limits.")
+            if self.state["policy_busy"]:
+                raise RuntimeError("An operator request is already running.")
+            self.policy_job = (name, copy.deepcopy(data))
+            self.state.update(policy_busy=True)
+            self.state["projects_error" if "project" in name else "workspace_error"] = None
+
     def close(self):
         self.disconnect()
         if self.thread:
@@ -305,22 +336,43 @@ class PanelController:
                             await session.initialize()
                             return await read_tool(session, name, arguments, admin=True)
                 result = await asyncio.wait_for(exchange(), REQUEST_TIMEOUT)
+                field = "access" if name in {"get_access_policy", "save_access_policy"} else "projects" if name == "list_operator_projects" else "project" if name == "inspect_operator_project" else "workspace"
+                error_field = "access_error" if field == "access" else "projects_error" if field in {"projects", "project"} else "workspace_error"
                 if result.get("status") == "ok":
-                    # Reject malformed helper replies; never render raw server HTML.
-                    from src.access_policy import validate_policy
-                    validate_policy(result["policy"])
-                    if not isinstance(result.get("revision"), str) or not isinstance(result.get("catalog"), list):
-                        raise ValueError("Invalid helper reply")
+                    if field == "access":
+                        from src.access_policy import validate_policy
+                        validate_policy(result["policy"])
+                        if not isinstance(result.get("revision"), str) or not isinstance(result.get("catalog"), list):
+                            raise ValueError("Invalid helper reply")
+                    elif field == "workspace":
+                        from src.resource_policy import validate_settings
+                        validate_settings(result["settings"])
+                        if not isinstance(result.get("runtime"), dict) or not isinstance(result.get("revision"), str) or not isinstance(result.get("specs"), list):
+                            raise ValueError("Invalid limits reply")
+                    elif field == "projects" and not isinstance(result.get("projects"), list):
+                        raise ValueError("Invalid projects reply")
+                    elif field == "project" and not isinstance(result.get("files"), list):
+                        raise ValueError("Invalid project reply")
                     with self.lock:
                         if not self.stop.is_set():
-                            self.state.update(access=result, access_error=None)
+                            self.state[field] = result
+                            self.state[error_field] = None
+                            if field == "access":
+                                supported = result.get("workspace_settings_supported") is True and isinstance(result.get("workspace"), dict)
+                                self.state["workspace_supported"] = supported
+                                self.state["workspace"] = result.get("workspace") if supported else None
+                                # Scope may have changed. Discard stale project metadata.
+                                self.state.update(projects=None, project=None, projects_error=None)
                 else:
                     with self.lock:
-                        self.state["access_error"] = ("Policy changed elsewhere. Reload before applying your changes."
-                                                      if result.get("status") == "conflict" else "Cannot save access policy. Check the values and operator directory permissions.")
+                        self.state[error_field] = ("Settings changed elsewhere. Reload before applying your changes."
+                                                  if result.get("status") == "conflict" else "Operator request failed. Check project roots, supported values and directory permissions.")
+                        if field == "project":
+                            self.state["project"] = None
             except Exception as exc:
                 with self.lock:
-                    self.state["access_error"] = "Operator helper unavailable. Install Guardian 0.30.0+ in the same environment as the MCP executable. " + connection_error(tail(), exc)["message"]
+                    error_field = "access_error" if name in {"get_access_policy", "save_access_policy"} else "projects_error" if "project" in name else "workspace_error"
+                    self.state[error_field] = "Operator helper unavailable. Install the current Guardian release in the same environment as the MCP executable. " + connection_error(tail(), exc)["message"]
             finally:
                 with self.lock:
                     self.state["policy_busy"] = False
@@ -496,6 +548,10 @@ class PanelHandler(BaseHTTPRequestHandler):
                 self.server.controller.policy_request(data)
             elif path == "/api/policy/reload" and data == {}:
                 self.server.controller.policy_request()
+            elif path in {"/api/limits", "/api/limits/reload", "/api/projects/reload", "/api/projects/inspect"}:
+                names = {"/api/limits": "save_workspace_settings", "/api/limits/reload": "get_workspace_settings",
+                         "/api/projects/reload": "list_operator_projects", "/api/projects/inspect": "inspect_operator_project"}
+                self.server.controller.workspace_request(names[path], data)
             elif path in ("/api/disconnect", "/api/refresh") and data == {}:
                 getattr(self.server.controller, "disconnect" if path.endswith("disconnect") else "refresh")()
             else:

@@ -20,10 +20,12 @@ try:
     from src.files import _redact_config_text, atomic_write_file
     from src.safety import record_audit_event, request_authorization
     from src.safe_io import regular_file, read_bounded
+    from src.resource_policy import get_runtime_budget
 except ImportError:
     from files import _redact_config_text, atomic_write_file
     from safety import record_audit_event, request_authorization
     from safe_io import regular_file, read_bounded
+    from resource_policy import get_runtime_budget
 
 
 MAX_PROJECTS = 50
@@ -159,7 +161,7 @@ def read_project_file(project_path: str, relative_path: str, max_bytes: int = 50
     path, error = _project_file(project, relative_path)
     if error: return error
     if not os.path.isfile(path): return {"status": "error", "error": "Project file was not found."}
-    limit = max(100, min(int(max_bytes), MAX_FILE_READ))
+    limit = max(100, min(int(max_bytes), get_runtime_budget()["limits"]["project_read_bytes"]))
     try:
         with regular_file(path) as handle: raw = handle.read(limit)
         if b"\0" in raw[:1024]: return {"status": "error", "error": "Binary project files are not readable."}
@@ -190,8 +192,9 @@ def read_project_file_range(project_path: str, relative_path: str, start_line: i
         return {"status": "error", "error": "start_line must be a positive integer."}
     if not isinstance(max_lines, int) or not 1 <= max_lines <= MAX_RANGE_LINES:
         return {"status": "error", "error": f"max_lines must be 1-{MAX_RANGE_LINES}."}
-    if not isinstance(max_bytes, int) or not 100 <= max_bytes <= MAX_FILE_READ:
-        return {"status": "error", "error": f"max_bytes must be 100-{MAX_FILE_READ}."}
+    if type(max_bytes) is not int or not 100 <= max_bytes <= 300_000:
+        return {"status": "error", "error": "max_bytes must be 100-300000."}
+    max_bytes = min(max_bytes, get_runtime_budget()["limits"]["project_read_bytes"])
     if byte_offset is not None and (not isinstance(byte_offset, int) or isinstance(byte_offset, bool) or byte_offset < 0):
         return {"status": "error", "error": "byte_offset must be a non-negative integer."}
     try:
@@ -256,36 +259,61 @@ def search_project_code(project_path: str, query: str, max_matches: int = 50) ->
     if error: return error
     if not isinstance(query, str) or not 1 <= len(query.strip()) <= 200 or any(ord(item) < 32 for item in query):
         return {"status": "error", "error": "query must contain 1 to 200 printable characters."}
-    limit = max(1, min(int(max_matches), MAX_MATCHES)); matches = []; scanned = 0; scanned_bytes = 0; needle = query.lower(); truncated = False
-    for current, dirs, files in os.walk(project, followlinks=False):
-        if truncated or scanned >= MAX_FILES_SCANNED or len(matches) >= limit: break
-        dirs[:] = [item for item in dirs if item not in IGNORED_DIRS and not os.path.islink(os.path.join(current, item))]
-        for name in sorted(files):
-            if scanned >= MAX_FILES_SCANNED or len(matches) >= limit: break
-            path = os.path.join(current, name)
-            if os.path.islink(path): continue
-            try: size = os.path.getsize(path)
-            except OSError: continue
-            if size > MAX_LARGE_FILE: continue
-            if scanned_bytes + size > MAX_SEARCH_BYTES:
-                truncated = True; break
-            scanned_bytes += size
-            scanned += 1
-            try:
-                with regular_file(path, "r") as handle:
-                    for number, line in enumerate(handle, 1):
+    limit = max(1, min(int(max_matches), MAX_MATCHES))
+    limits = get_runtime_budget()["limits"]
+    matches = []; scanned = 0; scanned_bytes = 0; entries = 0; truncated = False; skipped = 0
+    pending = [(project, 0)]; needle = query.lower(); deadline = time.monotonic() + 3
+    while pending and not truncated:
+        current, depth = pending.pop()
+        try:
+            with os.scandir(current) as listing:
+                for entry in listing:
+                    entries += 1
+                    if entries > 3000 or time.monotonic() > deadline or scanned >= limits["project_search_files"] or len(matches) >= limit:
+                        truncated = True; break
+                    if entry.is_symlink(): continue
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name not in IGNORED_DIRS:
+                            if depth < 8: pending.append((entry.path, depth + 1))
+                            else: truncated = True
+                        continue
+                    path, error = _project_file(project, os.path.relpath(entry.path, project))
+                    if error or not entry.is_file(follow_symlinks=False): continue
+                    remaining = limits["project_search_bytes"] - scanned_bytes
+                    if remaining <= 0:
+                        truncated = True; break
+                    try:
+                        raw = read_bounded(path, min(MAX_LARGE_FILE, remaining))
+                    except (OSError, ValueError):
+                        skipped += 1; continue
+                    scanned += 1; scanned_bytes += len(raw)
+                    if b"\0" in raw[:1024]: continue
+                    for number, line in enumerate(raw.decode("utf-8", errors="replace").splitlines(), 1):
                         if needle in line.lower():
                             clean, _ = _redact_config_text(line.strip())
                             matches.append({"relative_path": os.path.relpath(path, project).replace("\\", "/"), "line": number, "text": clean[:500]})
                             if len(matches) >= limit: break
-            except OSError: continue
-    return {"status": "ok", "query": query, "scanned_files": scanned, "scanned_bytes": scanned_bytes, "matches": matches, "truncated": truncated or scanned >= MAX_FILES_SCANNED or len(matches) >= limit}
+        except OSError: continue
+    return {"status": "ok", "query": query, "scanned_files": scanned, "scanned_bytes": scanned_bytes, "skipped_files": skipped, "matches": matches, "truncated": truncated or bool(pending) or skipped > 0 or len(matches) >= limit}
+
 
 
 def _cleanup_patches() -> None:
     now = time.time()
     for patch_id in [key for key, item in _patches.items() if item["expires_at"] <= now]: _patches.pop(patch_id, None)
     while len(_patches) >= MAX_PATCHES: _patches.pop(min(_patches, key=lambda key: _patches[key]["expires_at"]), None)
+
+
+def _patch_policy_error(item: dict) -> Optional[dict]:
+    project, error = _project_path(item["project_path"])
+    if error: return error
+    if project != item["project_path"]:
+        return {"status": "forbidden", "error": "Project path changed after staging."}
+    limits = get_runtime_budget()["limits"]
+    total = sum(entry.get("staged_bytes", len(entry.get("content", "").encode())) for entry in item["files"])
+    if len(item["files"]) > limits["project_patch_files"] or total > limits["project_patch_bytes"]:
+        return {"status": "resource_limited", "error": "Staged patch exceeds current server limits. Prepare a smaller patch."}
+    return None
 
 
 def begin_project_patch(project_path: str, title: str) -> Dict[str, Any]:
@@ -303,6 +331,7 @@ def stage_project_file_change(patch_id: str, relative_path: str, content: str) -
     with _patch_lock:
         _cleanup_patches(); item = _patches.get(patch_id)
         if not item or item["state"] != "staging": return {"status": "not_found", "error": "Patch is missing, expired, or already used."}
+        if error := _patch_policy_error(item): return error
         path, error = _project_file(item["project_path"], relative_path)
         if error: return error
         try:
@@ -312,7 +341,8 @@ def stage_project_file_change(patch_id: str, relative_path: str, content: str) -
         except OSError as exc: return {"status": "error", "error": str(exc)}
         existing = next((entry for entry in item["files"] if entry["path"] == path), None)
         total = sum(entry.get("staged_bytes", len(entry.get("content", "").encode("utf-8"))) for entry in item["files"] if entry is not existing) + len(content.encode("utf-8"))
-        if total > MAX_PATCH_BYTES or (existing is None and len(item["files"]) >= MAX_PATCH_FILES): return {"status": "error", "error": "Patch exceeds its file-count or size budget."}
+        limits = get_runtime_budget()["limits"]
+        if total > limits["project_patch_bytes"] or (existing is None and len(item["files"]) >= limits["project_patch_files"]): return {"status": "error", "error": "Patch exceeds its file-count or size budget."}
         entry = {"path": path, "relative_path": os.path.relpath(path, item["project_path"]).replace("\\", "/"), "original": original, "content": content, "staged_bytes": len(content.encode("utf-8")), "existed": os.path.isfile(path), "baseline_sha256": hashlib.sha256(original).hexdigest() if os.path.isfile(path) else None, "candidate_sha256": hashlib.sha256(content.encode()).hexdigest()}
         if existing: item["files"].remove(existing)
         item["files"].append(entry)
@@ -339,6 +369,7 @@ def stage_project_line_edit(patch_id: str, relative_path: str, start_line: int, 
     with _patch_lock:
         _cleanup_patches(); item = _patches.get(patch_id)
         if not item or item["state"] != "staging": return {"status": "not_found", "error": "Patch is missing, expired, or already used."}
+        if error := _patch_policy_error(item): return error
         path, error = _project_file(item["project_path"], relative_path)
         if error: return error
         if not os.path.isfile(path): return {"status": "error", "error": "Project file was not found."}
@@ -354,7 +385,8 @@ def stage_project_line_edit(patch_id: str, relative_path: str, start_line: int, 
         if len(candidate) > MAX_LARGE_FILE: return {"status": "error", "error": "Edited file exceeds the line-edit budget."}
         existing = next((entry for entry in item["files"] if entry["path"] == path), None)
         total = sum(entry.get("staged_bytes", len(entry.get("content", "").encode("utf-8"))) for entry in item["files"] if entry is not existing) + len(replacement.encode("utf-8"))
-        if total > MAX_PATCH_BYTES or (existing is None and len(item["files"]) >= MAX_PATCH_FILES):
+        limits = get_runtime_budget()["limits"]
+        if total > limits["project_patch_bytes"] or (existing is None and len(item["files"]) >= limits["project_patch_files"]):
             return {"status": "error", "error": "Patch exceeds its file-count or size budget."}
         entry = {"path": path, "relative_path": os.path.relpath(path, item["project_path"]).replace("\\", "/"), "existed": True, "baseline_sha256": baseline, "candidate_sha256": hashlib.sha256(candidate).hexdigest(), "staged_bytes": len(replacement.encode("utf-8")), "edit": {"start_line": start_line, "end_line": end_line, "replacement": replacement, "old_lines": old_lines[:MAX_DIFF_CHARS], "old_truncated": len(old_lines) > MAX_DIFF_CHARS}}
         if existing: item["files"].remove(existing)
@@ -367,6 +399,7 @@ def preview_project_patch(patch_id: str) -> Dict[str, Any]:
     with _patch_lock:
         _cleanup_patches(); item = _patches.get(patch_id)
         if not item or item["state"] != "staging" or not item["files"]: return {"status": "error", "error": "An active patch with staged files is required."}
+        if error := _patch_policy_error(item): return error
         diffs = []
         for entry in item["files"]:
             if "edit" in entry:
@@ -387,6 +420,7 @@ def apply_project_patch(patch_id: str, confirmation_token: Optional[str] = None)
     with _patch_lock:
         _cleanup_patches(); item = _patches.get(patch_id)
         if not item or item["state"] != "staging" or not item["files"]: return {"status": "not_found", "success": False, "error": "An active patch with staged files is required."}
+        if error := _patch_policy_error(item): return {**error, "success": False}
         params = {"patch_id": patch_id, "project_path": item["project_path"], "files": [_public_file(entry) for entry in item["files"]]}
         auth = request_authorization("apply_project_patch", params, "Apply a bounded source patch with backups; no code is executed.", confirmation_token)
         if auth is not None: return auth

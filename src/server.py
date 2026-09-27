@@ -170,7 +170,7 @@ try:
         preview_change_set as _preview_change_set,
         stage_file_change as _stage_file_change,
     )
-    from src.resource_policy import get_runtime_budget as _get_runtime_budget
+    from src.resource_policy import get_runtime_budget as _get_runtime_budget, bounded_response as _bounded_response
     from src.agent_jobs import (
         advance_agent_job as _advance_agent_job,
         cancel_agent_job as _cancel_agent_job,
@@ -356,7 +356,7 @@ except ImportError:
         preview_change_set as _preview_change_set,
         stage_file_change as _stage_file_change,
     )
-    from resource_policy import get_runtime_budget as _get_runtime_budget
+    from resource_policy import get_runtime_budget as _get_runtime_budget, bounded_response as _bounded_response
     from agent_jobs import (
         advance_agent_job as _advance_agent_job,
         cancel_agent_job as _cancel_agent_job,
@@ -504,6 +504,7 @@ def guardian_tool():
                 data = result
             if not isinstance(data, dict):
                 return result
+            data = _bounded_response(data, function.__name__)
             compact = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
             return CallToolResult(content=[TextContent(type="text", text=compact)], structuredContent=data)
         compact_result.__signature__ = inspect.signature(function, eval_str=True).replace(return_annotation=CallToolResult)
@@ -2189,7 +2190,7 @@ def get_system_overview_resource() -> str:
         except Exception:
             pass
 
-        return json.dumps(health_data, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(_bounded_response(health_data, "system-overview"), separators=(",", ":"), ensure_ascii=False)
     except Exception as exc:
         return json.dumps({"status": "error", "error": str(exc)})
 
@@ -2210,7 +2211,7 @@ def get_security_dashboard_resource() -> str:
             "open_ports": _get_open_ports(),
             "system_updates": _check_system_updates(),
         }
-        return json.dumps(dashboard, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(_bounded_response(dashboard, "security-dashboard"), separators=(",", ":"), ensure_ascii=False)
     except Exception as exc:
         return json.dumps({"status": "error", "error": str(exc)})
 
@@ -2228,7 +2229,7 @@ def get_docker_overview_resource() -> str:
             "containers": containers_summary,
             "stats": stats_summary,
         }
-        return json.dumps(overview, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(_bounded_response(overview, "docker-overview"), separators=(",", ":"), ensure_ascii=False)
     except Exception as exc:
         return json.dumps({"status": "error", "error": str(exc)})
 
