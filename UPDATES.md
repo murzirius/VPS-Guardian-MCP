@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.32.1] - 2026-09-27
+
+### Fixed
+- Serialize private descriptor validation and the full SQLite connection lifetime within each process for both shared drafts/history and Agent Jobs. On POSIX, closing a separate descriptor could otherwise release another thread's database locks. Cross-process coordination remains SQLite-backed, and external checks/writes still run outside database transactions.
+- Regression-test that concurrent threads cannot enter descriptor validation while another database connection is active. Use 0.32.1+ for shared operations on Linux.
+
+---
+
 ## [0.32.0] - 2026-09-27
 
 ### Added

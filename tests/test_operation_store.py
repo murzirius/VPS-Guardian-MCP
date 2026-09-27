@@ -86,6 +86,36 @@ class TestSharedOperations(unittest.TestCase):
             self.assertEqual(workspace._patches[identity]["first"], "first")
             self.assertEqual(workspace._patches[identity]["second"], "second")
 
+    def test_descriptor_checks_never_close_over_another_threads_sqlite_lock(self):
+        self.draft()
+        agent_jobs.create_agent_job("Check fixture budget", ["runtime_budget"])
+        for transaction, opener in ((store.transaction, store), (agent_jobs._transaction, agent_jobs)):
+            with self.subTest(database=opener.__name__):
+                started, finished = threading.Event(), threading.Event()
+                error = []
+                original_open = opener.open_regular_fd
+                def validate(*args, **kwargs):
+                    # Running here while the first connection is open would be
+                    # unsafe on POSIX: closing a second fd clears its locks.
+                    self.assertTrue(finished.is_set())
+                    return original_open(*args, **kwargs)
+                def contender():
+                    started.set()
+                    try:
+                        with transaction(): pass
+                    except BaseException as exc:
+                        error.append(exc)
+                with transaction():
+                    with patch.object(opener, "open_regular_fd", side_effect=validate):
+                        thread = threading.Thread(target=contender)
+                        thread.start()
+                        self.assertTrue(started.wait(2))
+                        time.sleep(.05)
+                        finished.set()
+                thread.join(3)
+                self.assertFalse(thread.is_alive())
+                self.assertEqual(error, [])
+
     def test_interrupted_apply_never_replays_and_becomes_uncertain(self):
         identity = self.draft()
         workspace.stage_project_file_change(identity, "main.py", "print('new')\n")

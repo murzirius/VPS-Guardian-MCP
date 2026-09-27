@@ -34,14 +34,14 @@ The English-language panel runs **on your computer, not on the VPS or this proje
 With [uv](https://docs.astral.sh/uv/) installed on your computer:
 
 ```bash
-uvx --from vps-guardian-mcp==0.32.0 vps-guardian-panel
+uvx --from vps-guardian-mcp==0.32.1 vps-guardian-panel
 ```
 
 Without uv, install in a local virtual environment. Windows PowerShell:
 
 ```powershell
 py -m venv .guardian-panel
-.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.32.0
+.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.32.1
 .\.guardian-panel\Scripts\python.exe -m src.local_panel
 ```
 
@@ -49,7 +49,7 @@ Linux/macOS:
 
 ```bash
 python3 -m venv .guardian-panel
-.guardian-panel/bin/pip install vps-guardian-mcp==0.32.0
+.guardian-panel/bin/pip install vps-guardian-mcp==0.32.1
 .guardian-panel/bin/vps-guardian-panel
 ```
 
@@ -58,7 +58,7 @@ The browser opens automatically. Enter the VPS address, SSH user, port and **pat
 To upgrade an existing pip installation on the VPS:
 
 ```bash
-/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.32.0
+/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.32.1
 ```
 
 Upgrade any other Guardian environments used by your agents, then reconnect **all agents once** so they start the policy-aware server. Subsequent permission changes affect new calls in those sessions without a restart. In-flight operations are not cancelled, and cached client tool lists may still show disabled tools; calls to those tools are rejected.
@@ -90,7 +90,7 @@ Cached project patches recheck current roots and resource limits before preview,
 
 #### Shared Operations and reconnects
 
-**Operations** requires Guardian **0.32.0+ on the VPS and on your computer**. The English panel shows the latest 25 project patches/ChangeSets and up to 25 Agent Jobs, with search, state filters, file fingerprints and a bounded event timeline. Click a record to inspect metadata. Refresh is manual or every 30 seconds while the tab is open; it uses the separate short-lived operator helper, including while agent access is paused. This view **does not execute, approve, cancel or retry changes**. There is no additional always-on VPS worker.
+**Operations** requires Guardian **0.32.1+ on the VPS and on your computer**. The English panel shows the latest 25 project patches/ChangeSets and up to 25 Agent Jobs, with search, state filters, file fingerprints and a bounded event timeline. Click a record to inspect metadata. Refresh is manual or every 30 seconds while the tab is open; it uses the separate short-lived operator helper, including while agent access is paused. This view **does not execute, approve, cancel or retry changes**. There is no additional always-on VPS worker.
 
 Agents use `list_operations(limit=10)` and `get_operation(operation_id="...")` to retrieve the same metadata. `next_before` is an opaque cursor for older draft/history pages; pass it back as `before`. Job lists are separately bounded latest snapshots, not part of that cursor. Normal MCP tool permissions still apply; the human operator's helper is separate. History is per SSH user, not per individual agent or current project root: everyone granted these history tools under that account can see operation metadata.
 
@@ -115,7 +115,7 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.32.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.32.1
 ```
 
 For development from source instead:
@@ -159,7 +159,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.32.0",
+        "@murzirius/vps-guardian-mcp@0.32.1",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -188,7 +188,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.32.0
+@murzirius/vps-guardian-mcp@0.32.1
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -208,7 +208,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.32.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.32.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.

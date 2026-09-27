@@ -21,6 +21,9 @@ MAX_ACTIVE_BYTES = 32_000_000
 MAX_HISTORY = 200
 HISTORY_SECONDS = 30 * 86400
 OPERATION_ID = re.compile(r"^(?:patch_[A-Za-z0-9_-]{10,32}|chg_[A-Za-z0-9_-]{10,32}|job_[0-9a-f]{16})$")
+# POSIX close() of ANY descriptor for a database drops that process's fcntl
+# locks. Serialize descriptor validation AND SQLite lifetime across threads.
+DATABASE_LOCK = threading.RLock()
 
 
 def job_directory():
@@ -30,6 +33,13 @@ def job_directory():
 
 @contextmanager
 def transaction():
+    with DATABASE_LOCK:
+        with _database_transaction() as connection:
+            yield connection
+
+
+@contextmanager
+def _database_transaction():
     directory = private_directory(job_directory())
     path = os.path.join(directory, "operations.sqlite3")
     descriptor = open_regular_fd(path, os.O_RDWR | os.O_CREAT, private=True)
