@@ -27,21 +27,21 @@ VPS Guardian has two parts:
 - Python 3.10+ on the VPS and Node.js 16+ on the AI client's computer.
 - A verified SSH host key. Password-based SSH is intentionally unsupported by the launcher.
 
-### Optional: local browser dashboard
+### Optional: local MCP access panel
 
-The dashboard runs **on your computer, not on the VPS or this project's website**. It shows CPU, RAM, root-disk usage, swap, uptime and failed systemd units through a read-only MCP-over-SSH connection. It cannot edit files or restart services. The npm package remains the MCP launcher; the dashboard comes with the Python package.
+The English-language panel runs **on your computer, not on the VPS or this project's website**. Its main screen manages agent permissions: pause/resume MCP calls, cap the safety mode, allow individual tools and set project roots. A collapsed server overview provides optional read-only monitoring. The npm package remains the MCP launcher; the panel comes with the Python package.
 
 With [uv](https://docs.astral.sh/uv/) installed on your computer:
 
 ```bash
-uvx --from vps-guardian-mcp==0.29.0 vps-guardian-panel
+uvx --from vps-guardian-mcp==0.30.0 vps-guardian-panel
 ```
 
 Without uv, install in a local virtual environment. Windows PowerShell:
 
 ```powershell
 py -m venv .guardian-panel
-.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.29.0
+.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.30.0
 .\.guardian-panel\Scripts\python.exe -m src.local_panel
 ```
 
@@ -49,17 +49,34 @@ Linux/macOS:
 
 ```bash
 python3 -m venv .guardian-panel
-.guardian-panel/bin/pip install vps-guardian-mcp==0.29.0
+.guardian-panel/bin/pip install vps-guardian-mcp==0.30.0
 .guardian-panel/bin/vps-guardian-panel
 ```
 
-The browser opens automatically. Enter the VPS address, SSH user, port and **path** to your local key, not its contents. Leave the key field empty to use ssh-agent; load encrypted keys into the agent beforehand. Advanced settings accept the Guardian executable path on the VPS and an optional local known_hosts file. The dashboard works with an existing compatible Guardian installation that exposes the three monitoring/safety tools, including 0.28.1; no server-side web service is installed.
+The browser opens automatically. Enter the VPS address, SSH user, port and **path** to your local key, not its contents. Leave the key field empty to use ssh-agent; load encrypted keys into the agent beforehand. Advanced settings accept the Guardian executable path on the VPS and an optional local known_hosts file. Permission management requires Guardian **0.30.0+ on the VPS**, with the adjacent `vps-guardian-access` executable from the same installation. Older compatible installations can show monitoring only, with an upgrade warning. No server-side web service is installed.
+
+To upgrade an existing pip installation on the VPS:
+
+```bash
+/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.30.0
+```
+
+Upgrade any other Guardian environments used by your agents, then reconnect **all agents once** so they start the policy-aware server. Subsequent permission changes affect new calls in those sessions without a restart. In-flight operations are not cancelled, and cached client tool lists may still show disabled tools; calls to those tools are rejected.
+
+Use **Apply permissions** to save a shared per-SSH-user policy on the VPS at `~/.local/share/vps-guardian-access/policy.json`. Connection settings stay in local RAM, but the access policy persists across panel/server restarts. **Reload policy** fetches the current server values; concurrent edits are rejected rather than overwriting another operator's changes. No policy means the existing launch settings remain in force. Invalid or unsafe stored policies fail closed and pause normal MCP access; `get_safety_status` remains available for recovery. Unsafe file ownership, permissions or symlinks require manual repair by the operator.
+
+- **Allow agent access:** pause/resume normal MCP tool and resource entry points. The separate operator helper remains reachable over SSH so you can restore access.
+- **Maximum safety mode:** the effective mode is the stricter of the agent's launch mode and this cap. Setting `controlled` cannot elevate a client launched as `read-only`. Confirmation tokens are the existing same-caller mechanism, **not independent human approval**.
+- **Allowed tools:** allow all installed/future tools, or uncheck that option and choose an explicit allowlist. New tools are denied by default in an explicit allowlist. `get_safety_status` cannot be disabled. Read-only mode can still create bookkeeping records; use tool permissions when you also need to block those entry points.
+- **Project roots:** inherit each process's `VPS_GUARDIAN_PROJECT_ROOTS`, or replace it with up to 16 absolute VPS directory paths, one per line. An empty custom list blocks project workspaces. Filesystem roots and symlink roots are rejected. This controls project tools, not the separate fixed configuration-file directory whitelist.
+
+The operator helper is **not registered as an ordinary agent tool**. Tools and the three read resources enforce access restrictions on the server. Policies apply to upgraded Guardian processes under the **same SSH user**, not to individually authenticated agent identities. An agent with independent root SSH access, the same account's shell, or permission to change Guardian's code can bypass this MCP boundary. For stronger separation use a restricted dedicated OS account; do not treat the panel as a sandbox or independent approval service.
 
 SSH host-key verification is mandatory. Verify the fingerprint independently and connect once with ordinary SSH before using the panel. The dashboard does not accept unknown keys or use custom SSH config/aliases, ProxyCommand or jump hosts: enter a directly reachable IP/hostname. A changed host key must be investigated, not bypassed.
 
 Connection settings and snapshots stay in memory; the panel never uploads or reads private-key contents. One MCP connection samples metrics every 30 seconds; manual refresh is limited to once per 10 seconds. Unavailable metrics are shown as unavailable, not zero. No failed systemd units is **not** a guarantee all applications are healthy. If the connection fails, retained metrics are marked stale.
 
-Keep the printed local link private: its fragment is a per-launch access token. The token stays in tab memory and is removed from the address bar; after reloading, reopen the full printed link. `Ctrl+C` in the launch terminal stops the panel and its connection. `--no-browser` only prints the link; `--port 8765` selects a loopback port. Do not reverse-proxy or expose this local dashboard publicly. Loopback/token checks do not protect against malware running as your local user; read-only MCP is not OS-level isolation from an SSH account with broad rights.
+Keep the printed local link private: its fragment is a per-launch **operator** access token. The token stays in tab memory and is removed from the address bar; after reloading, reopen the full printed link. `Ctrl+C` in the launch terminal stops the panel and its connection. `--no-browser` only prints the link; `--port 8765` selects a loopback port. Do not reverse-proxy or expose the panel publicly. Loopback/token checks do not protect against malware running as your local user.
 
 ### 1. Install the server on the VPS
 
@@ -70,13 +87,13 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.29.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.30.0
 ```
 
 For development from source instead:
 
 ```bash
-git clone --branch v0.29.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+git clone --branch v0.30.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
 cd /opt/vps-guardian-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -95,7 +112,7 @@ Log out and back in after changing groups.
 
 | Mode | Use it when | Result |
 | --- | --- | --- |
-| `read-only` | Inspecting or diagnosing | Default. Every mutation is blocked. |
+| `read-only` | Inspecting or diagnosing | Default. Guarded server mutations are blocked; bookkeeping tools may still save records. |
 | `controlled` | Assisted administration | Recommended. Each exact change needs a short-lived, single-use confirmation token. |
 | `unrestricted` | A separately protected automation environment | Changes run immediately. Avoid on a general-purpose agent. |
 
@@ -114,7 +131,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.29.0",
+        "@murzirius/vps-guardian-mcp@0.30.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -143,7 +160,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.29.0
+@murzirius/vps-guardian-mcp@0.30.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -163,7 +180,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.29.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.30.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.

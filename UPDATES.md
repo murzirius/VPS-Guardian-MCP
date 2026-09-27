@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.30.0] - 2026-09-27
+
+### Added
+- English local operator panel with MCP Access as its primary screen: pause/resume access, maximum safety mode, searchable per-tool allowlist and editable project roots. Monitoring is an optional collapsed section.
+- Separate SSH operator helper (`vps-guardian-access`), not an ordinary agent tool. Shared per-SSH-user policy persists on the VPS and is checked on subsequent calls by upgraded Guardian processes.
+
+### Safety and resource limits
+- Effective safety mode cannot exceed the client's launch mode. Explicit tool allowlists deny future tools; `get_safety_status` remains available for recovery. Read resources honor tool restrictions and operator policy files are excluded from ordinary file/project access.
+- Bounded, private policy files, atomic writes, interprocess locking, revision checks for concurrent edits, and fail-closed handling of invalid/unsafe policies. Helper connections are short-lived, and monitoring retains its bounded 30-second sampling.
+- Existing local bearer/Host/Origin protections also cover policy updates. Policy management remains available when agent monitoring tools are paused. Tests cover live revocation, recovery, caps, roots, resource bypasses and actual SDK stdio operator calls.
+- This is an MCP restriction, not OS isolation, per-agent authentication or independent human approval. Old MCP processes must upgrade and reconnect once; running operations are not cancelled.
+
+---
+
 ## [0.29.0] - 2026-09-27
 
 ### Added

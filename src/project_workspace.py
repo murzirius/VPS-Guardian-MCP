@@ -40,12 +40,19 @@ MAX_PATCH_FILES = 3
 MAX_PATCH_BYTES = 300_000
 PATCH_TTL_SECONDS = 300
 MAX_DIFF_CHARS = 12_000
-IGNORED_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".next"}
+IGNORED_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".next", "vps-guardian-access"}
 _patches: Dict[str, Dict[str, Any]] = {}
 _patch_lock = threading.RLock()
 
 
 def _roots() -> List[str]:
+    try:
+        from src.access_policy import managed_project_roots
+    except ImportError:
+        from access_policy import managed_project_roots
+    managed = managed_project_roots()
+    if managed is not None:
+        return [path for path in managed if os.path.isdir(path)]
     configured = [item.strip() for item in os.environ.get("VPS_GUARDIAN_PROJECT_ROOTS", "").split(os.pathsep) if item.strip()]
     defaults = configured or (["/var/www", "/opt", "/srv"] if os.name != "nt" else [os.path.realpath(".")])
     return [os.path.realpath(path) for path in defaults if os.path.isdir(path)]
@@ -59,6 +66,12 @@ def _project_path(value: str) -> tuple[Optional[str], Optional[Dict[str, Any]]]:
     if not isinstance(value, str) or not value.strip():
         return None, {"status": "error", "error": "project_path must be a non-empty string."}
     path = os.path.realpath(os.path.abspath(value.strip()))
+    try:
+        from src.access_policy import control_path
+    except ImportError:
+        from access_policy import control_path
+    if control_path(path):
+        return None, {"status": "forbidden", "error": "The operator policy directory is not a project workspace."}
     if not any(_within(path, root) for root in _roots()):
         return None, {"status": "forbidden", "error": "Project is outside configured project roots.", "project_path": path}
     if not os.path.isdir(path) or os.path.islink(path):
@@ -131,6 +144,12 @@ def _project_file(project: str, relative_path: str) -> tuple[Optional[str], Opti
     candidate = os.path.realpath(os.path.join(project, relative))
     if not _within(candidate, project) or os.path.islink(candidate):
         return None, {"status": "forbidden", "error": "Path escapes the project or is a symlink."}
+    try:
+        from src.access_policy import control_path
+    except ImportError:
+        from access_policy import control_path
+    if control_path(candidate):
+        return None, {"status": "forbidden", "error": "Operator policy files are not a project workspace."}
     return candidate, None
 
 

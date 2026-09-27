@@ -49,6 +49,7 @@ class TestReleaseMetadata(unittest.TestCase):
         from importlib import resources
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('vps-guardian-panel = "src.local_panel:main"', pyproject)
+        self.assertIn('vps-guardian-access = "src.access_policy:main"', pyproject)
         self.assertIn('"panel_assets/*.html"', pyproject)
         for name in ("index.html", "app.js", "style.css"):
             self.assertGreater(len(resources.files("src").joinpath("panel_assets", name).read_bytes()), 0)

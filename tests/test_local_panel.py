@@ -38,6 +38,9 @@ class FakeController:
     def refresh(self):
         self.calls.append(("refresh",))
 
+    def policy_request(self, data=None):
+        self.calls.append(("policy", data))
+
 
 class TestPanelHTTP(unittest.TestCase):
     def setUp(self):
@@ -101,6 +104,22 @@ class TestPanelHTTP(unittest.TestCase):
             self.assertEqual(self.request("POST", path, {}, self.auth())[0], 404)
         self.assertEqual(self.request("POST", "/api/connect", {"host": "example.com", "mode": "unrestricted"}, self.auth())[0], 400)
         self.assertFalse(self.controller.calls)
+
+    def test_operator_endpoints_require_token_and_same_origin(self):
+        for path in ("/api/policy", "/api/policy/reload"):
+            self.assertEqual(self.request("POST", path, {}, {**self.auth(), "Authorization": "Bearer invalid"})[0], 401)
+            self.assertEqual(self.request("POST", path, {}, {**self.auth(), "Origin": "https://evil.example"})[0], 403)
+        self.assertFalse(self.controller.calls)
+        self.assertEqual(self.request("POST", "/api/policy/reload", {}, self.auth())[0], 202)
+        self.assertEqual(self.controller.calls, [("policy", None)])
+
+    def test_panel_is_english_and_permissions_are_primary(self):
+        html = self.request(path="/")[2].decode()
+        self.assertIn('lang="en"', html)
+        self.assertLess(html.index("MCP Access</h2>"), html.index("Server overview"))
+        self.assertIn("Apply permissions", html)
+        for path in ("/", "/app.js"):
+            self.assertNotRegex(self.request(path=path)[2].decode(), r"[А-Яа-яёЁ]")
 
     def test_body_size_and_content_type(self):
         self.assertEqual(self.request("POST", "/api/connect", {"host": "a" * 9000}, self.auth())[0], 400)
@@ -179,6 +198,30 @@ class TestPanelConnection(unittest.TestCase):
         self.assertEqual(ALLOWED_TOOLS, {"get_safety_status", "get_system_health", "get_failed_systemd_units"})
         with self.assertRaises(ValueError):
             asyncio.run(read_tool(None, "restart_service"))
+        with self.assertRaises(ValueError):
+            asyncio.run(read_tool(None, "save_access_policy"))
+        with self.assertRaises(ValueError):
+            asyncio.run(read_tool(None, "get_system_health", admin=True))
+
+    def test_operator_program_is_adjacent_and_strictly_quoted(self):
+        with patch("src.local_panel.shutil.which", return_value="ssh"):
+            params = ssh_parameters(validate_connection({"host": "host", "remote_path": "/opt/a b/bin/vps-guardian-mcp"}), admin=True)
+        self.assertEqual(params.args[-1], "env VPS_GUARDIAN_MODE=read-only VPS_GUARDIAN_TOOL_PROFILE=full '/opt/a b/bin/vps-guardian-access'")
+        self.assertIn("StrictHostKeyChecking=yes", params.args)
+
+    def test_policy_queue_rejects_unknown_fields_and_parallel_requests(self):
+        controller = PanelController()
+        with self.assertRaises(RuntimeError):
+            controller.policy_request()
+        controller.state.update(connection="connected", access_supported=True)
+        for payload in ({"command": "bad"}, {"policy": {}, "expected_revision": "none"}):
+            with self.assertRaises(ValueError):
+                controller.policy_request(payload)
+        controller.policy_request()
+        with self.assertRaises(RuntimeError):
+            controller.policy_request()
+        controller.disconnect()
+        self.assertIsNone(controller.policy_job)
 
     def test_diagnostics_never_return_raw_stderr_or_exception(self):
         for stderr, expected in (("Permission denied secret-key-path", "authentication"),
@@ -216,9 +259,42 @@ class TestPanelConnection(unittest.TestCase):
         controller.disconnect()
         self.assertIsNone(controller.status()["snapshot"])
 
-    def fixture_params(self, mode="read-only", changes=False):
+    def fixture_params(self, mode="read-only", changes=False, policy_dir=None):
         return StdioServerParameters(command=sys.executable,
-            args=["-u", str(Path(__file__).with_name("panel_fixture.py"))], env={"PANEL_TEST_MODE": mode, "PANEL_TEST_CHANGES": "1" if changes else "0"})
+            args=["-u", str(Path(__file__).with_name("panel_fixture.py"))], env={"PANEL_TEST_MODE": mode, "PANEL_TEST_CHANGES": "1" if changes else "0", **({"PANEL_TEST_POLICY_DIR": policy_dir} if policy_dir else {})})
+
+    def wait_policy(self, controller):
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            state = controller.status()
+            if not state["policy_busy"] and state["access"]:
+                return state
+            time.sleep(.05)
+        self.fail("Policy request did not finish: " + str(controller.status()))
+
+    def test_real_stdio_operator_can_pause_and_restore_agent_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = PanelController()
+            params = self.fixture_params(policy_dir=str(Path(directory) / "policy"))
+            with patch("src.local_panel.ssh_parameters", return_value=params):
+                try:
+                    controller.connect({"host": "fixture.example"})
+                    self.wait_state(controller, "connected")
+                    before = self.wait_policy(controller)["access"]
+                    controller.policy_request({"policy": {**before["policy"], "enabled": False}, "expected_revision": before["revision"]})
+                    paused = self.wait_policy(controller)["access"]
+                    self.assertFalse(paused["policy"]["enabled"])
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline and not controller.status().get("monitoring_blocked"):
+                        time.sleep(.05)
+                    self.assertTrue(controller.status()["monitoring_blocked"])
+                    self.assertEqual(controller.status()["connection"], "connected")
+                    controller.policy_request({"policy": {**paused["policy"], "enabled": True}, "expected_revision": paused["revision"]})
+                    restored = self.wait_policy(controller)["access"]
+                    self.assertTrue(restored["policy"]["enabled"])
+                    self.assertIsNone(controller.status()["access_error"])
+                finally:
+                    controller.close()
 
     def wait_state(self, controller, expected):
         deadline = time.monotonic() + 15

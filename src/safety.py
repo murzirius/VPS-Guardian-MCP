@@ -48,7 +48,13 @@ def get_safety_mode() -> str:
     raw_mode = os.environ.get("VPS_GUARDIAN_MODE", "read-only").strip().lower()
     aliases = {"readonly": "read-only", "confirm": "controlled", "full": "unrestricted"}
     mode = aliases.get(raw_mode, raw_mode)
-    return mode if mode in VALID_SAFETY_MODES else "read-only"
+    mode = mode if mode in VALID_SAFETY_MODES else "read-only"
+    try:
+        from src.access_policy import mode_cap, MODES
+    except ImportError:
+        from access_policy import mode_cap, MODES
+    cap = mode_cap()
+    return mode if MODES[mode] <= MODES[cap] else cap
 
 
 def _token_ttl_seconds() -> int:
@@ -254,12 +260,23 @@ def get_safety_status() -> Dict[str, Any]:
             if record["expires_at"] > time.time()
         )
     mode = get_safety_mode()
+    try:
+        from src.access_policy import load_policy
+    except ImportError:
+        from access_policy import load_policy
+    access = load_policy()
+    policy = access["policy"]
     return {
         "status": "ok",
         "safety_mode": mode,
         "state_changes_enabled": mode != "read-only",
         "confirmation_required": mode == "controlled",
         "human_approval_enforced": False,
+        "access_policy_supported": True,
+        "access_policy": {"enabled": policy["enabled"], "mode_cap": policy["mode_cap"],
+                          "configured": access["configured"], "error": access["error"],
+                          "allowed_tool_count": None if policy["allowed_tools"] is None else len(policy["allowed_tools"]),
+                          "custom_project_roots": policy["project_roots"] is not None},
         "confirmation_ttl_seconds": _token_ttl_seconds(),
         "pending_confirmations": active_count,
         "audit_log_path": _last_audit_path or _configured_audit_path(),

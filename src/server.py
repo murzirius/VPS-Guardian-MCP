@@ -478,6 +478,14 @@ _CORE_TOOLS = {
 }
 
 
+def _access_denial(name):
+    try:
+        from src.access_policy import access_denial
+    except ImportError:
+        from access_policy import access_denial
+    return access_denial(name)
+
+
 def guardian_tool():
     """Register the full catalog or a smaller agent workspace catalog at startup."""
     def decorate(function):
@@ -485,7 +493,8 @@ def guardian_tool():
             return function
         @functools.wraps(function)
         def compact_result(*args, **kwargs):
-            result = function(*args, **kwargs)
+            denied = _access_denial(function.__name__)
+            result = denied if denied is not None else function(*args, **kwargs)
             if isinstance(result, CallToolResult):
                 return result
             if isinstance(result, str):
@@ -2163,6 +2172,9 @@ def verify_backup(archive_path: str) -> str:
 @mcp.resource("vps://system-overview")
 def get_system_overview_resource() -> str:
     """Live JSON resource providing continuous system snapshot and update alerts for AI context."""
+    denied = _access_denial("get_system_health") or _access_denial("check_system_updates")
+    if denied:
+        return json.dumps(denied)
     try:
         health_data = _get_system_health()
         # Add live update and reboot status alerts for agent awareness
@@ -2185,6 +2197,10 @@ def get_system_overview_resource() -> str:
 @mcp.resource("vps://security-dashboard")
 def get_security_dashboard_resource() -> str:
     """Live security dashboard aggregating firewall, failed logins, fail2ban, and open ports."""
+    for name in ("get_ufw_status", "get_fail2ban_status", "check_failed_logins", "audit_ssh_config", "get_open_ports", "check_system_updates"):
+        denied = _access_denial(name)
+        if denied:
+            return json.dumps(denied)
     try:
         dashboard = {
             "ufw": _get_ufw_status(),
@@ -2202,6 +2218,9 @@ def get_security_dashboard_resource() -> str:
 @mcp.resource("vps://docker-overview")
 def get_docker_overview_resource() -> str:
     """Live summary resource aggregating Docker engine status, containers inventory, and resource metrics."""
+    denied = _access_denial("list_docker_containers") or _access_denial("get_docker_stats")
+    if denied:
+        return json.dumps(denied)
     try:
         containers_summary = _list_docker_containers(all=True)
         stats_summary = _get_docker_stats()

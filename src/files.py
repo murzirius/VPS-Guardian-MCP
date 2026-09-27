@@ -88,6 +88,12 @@ def is_path_permitted(target_path: str) -> tuple[bool, str]:
     except Exception as exc:
         return False, str(exc)
 
+    try:
+        from src.access_policy import control_path
+    except ImportError:
+        from access_policy import control_path
+    if control_path(canonical_target):
+        return False, canonical_target
     allowed_dirs = get_allowed_directories()
     for allowed_dir in allowed_dirs:
         canonical_allowed = os.path.realpath(allowed_dir)

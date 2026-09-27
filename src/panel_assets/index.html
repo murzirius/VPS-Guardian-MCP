@@ -1,46 +1,62 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>VPS Guardian · локальная панель</title>
-  <link rel="stylesheet" href="/style.css">
-  <script src="/app.js" defer></script>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VPS Guardian · MCP Access</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
 </head>
-<body>
-  <div class="shell">
-    <header><span class="brand">vps<span>guardian</span><span class="brand-dot">●</span></span><div class="local-label"><span class="dot"></span> Локально на вашем устройстве</div></header>
-    <main>
-      <section class="intro"><div><p class="eyebrow">ВАШ СЕРВЕР. БЕЗ ЛИШНИХ КОМАНД.</p><h1>Всё под наблюдением.</h1><p class="subtitle">Ресурсы, состояние и связь с VPS — в одном месте.</p></div><span class="mode">↗ Только просмотр</span></section>
-      <div id="notice" class="notice" role="alert" hidden></div>
-      <div class="workspace">
-        <aside class="card connection-card">
-          <div class="section-top"><h2>Подключение</h2><span class="small-tag">SSH</span></div>
-          <p class="muted small">Ключ остаётся на этом устройстве.<br>Настройки не сохраняются на диск.</p>
-          <form id="connection-form">
-            <label for="host">Адрес сервера</label><input id="host" name="host" required maxlength="253" placeholder="IP или example.com" autocomplete="off" spellcheck="false">
-            <div class="form-row"><div><label for="user">Пользователь</label><input id="user" name="user" value="root" required maxlength="64" autocomplete="off" spellcheck="false"></div><div class="port-field"><label for="port">Порт</label><input id="port" name="port" value="22" type="number" min="1" max="65535" required></div></div>
-            <label for="key">Путь к SSH-ключу <span class="optional">необязательно</span></label><input id="key" name="key" placeholder="~/.ssh/id_ed25519" autocomplete="off" spellcheck="false"><p class="field-help">Пустое поле — использовать ssh-agent. Не вставляйте сам ключ или пароль.</p>
-            <details><summary>Дополнительные настройки</summary><label for="remote-path">Guardian на VPS</label><input id="remote-path" name="remote_path" value="/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp" autocomplete="off" spellcheck="false"><label for="known-hosts">Файл known_hosts</label><input id="known-hosts" name="known_hosts" placeholder="По умолчанию — ~/.ssh/known_hosts" autocomplete="off" spellcheck="false"></details>
-            <button id="connect" type="submit" class="primary">Подключить сервер <span>→</span></button>
-            <button id="disconnect" type="button" class="secondary" hidden>Отключить</button>
-          </form>
-          <div class="trust-note"><span>◇</span><p>Проверка SSH fingerprint обязательна. Первое подключение подтвердите после сверки ключа сервера.</p></div>
-        </aside>
-        <section class="dashboard" aria-label="Состояние VPS">
-          <div class="card server-card"><div class="server-icon">▤</div><div class="server-title"><h2 id="server-name">Сервер не подключён</h2><p id="server-detail" class="muted small">Заполните данные подключения слева</p></div><span id="connection-status" class="status">Не подключён</span></div>
-          <div class="metrics">
-            <article class="card metric"><div class="metric-label">CPU <span>01</span></div><div id="cpu-value" class="metric-value">—<span>%</span></div><div class="bar"><div id="cpu-bar"></div></div><p id="cpu-detail" class="muted small">Загрузка процессора</p></article>
-            <article class="card metric"><div class="metric-label">RAM <span>02</span></div><div id="ram-value" class="metric-value">—<span>%</span></div><div class="bar"><div id="ram-bar"></div></div><p id="ram-detail" class="muted small">Использование памяти</p></article>
-            <article class="card metric"><div class="metric-label">Диск <span>03</span></div><div id="disk-value" class="metric-value">—<span>%</span></div><div class="bar"><div id="disk-bar"></div></div><p id="disk-detail" class="muted small">Корневой раздел</p></article>
-          </div>
-          <div class="card services-card"><div class="section-top"><h2>Состояние сервисов</h2><span id="services-count" class="small-tag">systemd</span></div><div id="services-content" class="empty-state"><span class="empty-icon">◎</span><p>Здесь появятся проблемные сервисы</p><span class="muted small">После подключения проверим failed units в systemd</span></div></div>
-          <div class="card details-card"><div><span class="muted small">Время работы</span><p id="uptime">—</p></div><div><span class="muted small">Swap</span><p id="swap">—</p></div><div><span class="muted small">Последнее обновление</span><p id="updated-at">—</p></div><button id="refresh" type="button" class="refresh" disabled aria-label="Обновить показатели">↻ Обновить</button></div>
-          <p class="dashboard-note" id="data-note">Метрики обновляются раз в 30 секунд. Никаких изменений на сервере.</p>
-        </section>
-      </div>
-    </main>
-    <footer><span>VPS Guardian <span class="muted">/ local panel</span></span><span>Без облака. Без передачи SSH-ключей.</span></footer>
-  </div>
-</body>
-</html>
+<body><div class="shell">
+<header><span class="brand">vps<span>guardian</span><span class="brand-dot">●</span></span><div class="local-label"><span class="dot"></span> Local on your device</div></header>
+<main>
+<section class="intro"><div><p class="eyebrow">YOUR SERVER. YOUR RULES.</p><h1>Control what agents can do.</h1><p class="subtitle">Manage MCP access, tools and project boundaries in one place.</p></div><span class="mode">Operator panel</span></section>
+<div id="notice" class="notice" role="alert" hidden></div>
+<div class="workspace">
+<aside class="card connection-card">
+<div class="section-top"><h2>Connection</h2><span class="small-tag">SSH</span></div>
+<p class="muted small">Your key stays on this device.<br>Connection settings stay in memory.</p>
+<form id="connection-form">
+<label for="host">Server address</label><input id="host" name="host" required maxlength="253" placeholder="IP or example.com" autocomplete="off" spellcheck="false">
+<div class="form-row"><div><label for="user">SSH user</label><input id="user" name="user" value="root" required maxlength="64" autocomplete="off" spellcheck="false"></div><div class="port-field"><label for="port">Port</label><input id="port" name="port" value="22" type="number" min="1" max="65535" required></div></div>
+<label for="key">SSH key path <span class="optional">optional</span></label><input id="key" name="key" placeholder="~/.ssh/id_ed25519" autocomplete="off" spellcheck="false"><p class="field-help">Leave empty to use ssh-agent. Never paste a private key or password.</p>
+<details><summary>Advanced settings</summary><label for="remote-path">Guardian executable on VPS</label><input id="remote-path" name="remote_path" value="/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp" autocomplete="off" spellcheck="false"><label for="known-hosts">known_hosts file</label><input id="known-hosts" name="known_hosts" placeholder="Default: ~/.ssh/known_hosts" autocomplete="off" spellcheck="false"></details>
+<button id="connect" type="submit" class="primary">Connect server <span>→</span></button><button id="disconnect" type="button" class="secondary" hidden>Disconnect</button>
+</form>
+<div class="trust-note"><span>◇</span><p>SSH host-key verification is required. Verify the server fingerprint before accepting its first connection.</p></div>
+</aside>
+<section class="dashboard" aria-label="MCP access management">
+<div class="card server-card"><div class="server-icon">▤</div><div class="server-title"><h2 id="server-name">No server connected</h2><p id="server-detail" class="muted small">Enter your connection details on the left</p></div><span id="connection-status" class="status">Disconnected</span></div>
+<section class="card access-card">
+<div class="section-top"><h2>MCP Access</h2><span id="access-badge" class="small-tag">Not loaded</span></div>
+<p id="access-help" class="muted small">Connect to Guardian 0.30.0+ to load the server-side access policy.</p>
+<div id="access-message" class="notice" role="status" hidden></div>
+<form id="access-form"><fieldset id="access-fields" disabled>
+<div class="access-grid"><div><label class="check-label" for="enabled"><input id="enabled" type="checkbox" checked> Allow agent access</label><p class="field-help">Turn off to pause new MCP calls. Running operations are not cancelled.</p></div><div><label for="mode-cap">Maximum safety mode</label><select id="mode-cap"><option value="read-only">Read-only — block guarded server changes</option><option value="controlled">Controlled — require confirmation tokens</option><option value="unrestricted">Unrestricted — allow launch mode</option></select></div></div>
+<p class="boundary-note">A cap can restrict, not elevate, an agent's launch mode. Controlled tokens are not independent human approval.</p>
+<div class="section-top tools-heading"><h3>Allowed tools</h3><span id="tool-count" class="muted small">—</span></div>
+<label class="check-label" for="all-tools"><input id="all-tools" type="checkbox" checked> Allow all installed and future tools</label>
+<p class="field-help">Uncheck to use an explicit allowlist. get_safety_status stays available for recovery.</p>
+<label for="tool-search" class="sr-only">Search tools</label><input id="tool-search" placeholder="Search tools by name or purpose…" autocomplete="off" spellcheck="false">
+<div id="tool-list" class="tool-list"><p class="muted small">The tool catalog will appear after connecting.</p></div>
+<p id="no-tool-match" class="field-help" hidden>No tools match your search.</p>
+<label class="check-label roots-label" for="inherit-roots"><input id="inherit-roots" type="checkbox" checked> Inherit project roots from MCP launch settings</label>
+<label for="project-roots">Project roots <span class="optional">one absolute VPS directory per line</span></label>
+<textarea id="project-roots" rows="3" placeholder="/var/www&#10;/opt&#10;/srv&#10;/home/bot" spellcheck="false" disabled></textarea>
+<p class="field-help">Custom roots replace VPS_GUARDIAN_PROJECT_ROOTS. An empty custom list blocks project workspaces. Configuration-file tools have their own fixed directories.</p>
+</fieldset>
+<div class="policy-actions"><button id="apply-policy" class="primary" type="submit" disabled>Apply permissions <span>→</span></button><button id="reload-policy" class="refresh" type="button" disabled>Reload policy</button></div>
+</form>
+<p id="policy-save-state" class="muted small" aria-live="polite">No policy loaded.</p>
+<p class="boundary-note">Policy is saved on the VPS and shared by upgraded Guardian processes running as this SSH user. Older agents must upgrade and reconnect once. This is an MCP boundary, not isolation from root SSH or server-code access.</p>
+</section>
+<details class="monitoring"><summary>Server overview <span class="muted small">optional · read-only · 30s refresh</span></summary>
+<div class="metrics">
+<article class="card metric"><div class="metric-label">CPU <span>01</span></div><div id="cpu-value" class="metric-value">—<span>%</span></div><div class="bar"><div id="cpu-bar"></div></div><p id="cpu-detail" class="muted small">Processor usage</p></article>
+<article class="card metric"><div class="metric-label">RAM <span>02</span></div><div id="ram-value" class="metric-value">—<span>%</span></div><div class="bar"><div id="ram-bar"></div></div><p id="ram-detail" class="muted small">Memory usage</p></article>
+<article class="card metric"><div class="metric-label">Disk <span>03</span></div><div id="disk-value" class="metric-value">—<span>%</span></div><div class="bar"><div id="disk-bar"></div></div><p id="disk-detail" class="muted small">Root filesystem</p></article>
+</div>
+<div class="card services-card"><div class="section-top"><h2>Services</h2><span id="services-count" class="small-tag">systemd</span></div><div id="services-content" class="empty-state"></div></div>
+<div class="card details-card"><div><span class="muted small">Uptime</span><p id="uptime">—</p></div><div><span class="muted small">Swap</span><p id="swap">—</p></div><div><span class="muted small">Last refresh</span><p id="updated-at">—</p></div><button id="refresh" type="button" class="refresh" disabled>↻ Refresh</button></div>
+<p class="dashboard-note" id="data-note">Monitoring also respects the MCP access policy.</p>
+</details>
+</section></div></main>
+<footer><span>VPS Guardian <span class="muted">/ local panel</span></span><span>No cloud. No SSH-key uploads.</span></footer>
+</div></body></html>
