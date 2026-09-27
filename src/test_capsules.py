@@ -5,6 +5,7 @@ receives the candidate patch and is removed after one synchronous check.
 """
 
 from __future__ import annotations
+from src.operation_store import storage_errors
 
 import hashlib
 import os
@@ -336,35 +337,44 @@ def get_test_capsule_status() -> Dict[str, Any]:
     return {"status": "ok", "linux": sys.platform.startswith("linux") and fcntl is not None, "docker_cli": bool(shutil.which("docker")), "available_memory_bytes": get_runtime_budget()["available_memory_bytes"], "checks": sorted(CHECKS), "limits": {"snapshot_files": MAX_SNAPSHOT_FILES, "snapshot_directories": MAX_SNAPSHOT_DIRS, "snapshot_entries": MAX_SNAPSHOT_ENTRIES, "snapshot_bytes": MAX_SNAPSHOT_BYTES, "container_memory_bytes": 128 * 1024 * 1024, "timeout_seconds": CHECK_TIMEOUT_SECONDS, "concurrent_capsules": get_runtime_budget()["limits"]["capsule_concurrency"]}, "note": "Images must already be local. No source project is mounted; no network or production environment is passed."}
 
 
+@storage_errors
 def test_project_patch(patch_id: str, check: str = "auto", confirmation_token: Optional[str] = None) -> Dict[str, Any]:
     """Test a staged candidate in a temporary copy; never touch the live project."""
     if not isinstance(patch_id, str) or not isinstance(check, str) or check not in CHECKS:
         return {"status": "error", "error": "An active patch_id and an allowlisted check are required.", "checks": sorted(CHECKS)}
-    with _patch_lock:
-        _cleanup_patches()
-        item = _patches.get(patch_id)
-        if not item or item["state"] != "staging" or not item["files"]:
-            return {"status": "not_found", "error": "An active staged project patch is required."}
-        try:
-            from src.project_workspace import _patch_policy_error
-        except ImportError:
-            from project_workspace import _patch_policy_error
-        if error := _patch_policy_error(item): return error
-        selected = _check_name(item, check)
-        if selected is None:
-            return {"status": "error", "error": "auto requires staged source in one language (Python or JavaScript); choose an explicit check otherwise."}
-        image, error = _preflight(selected)
-        if error:
-            return {"status": "unavailable", "error": error}
-        fingerprint = _fingerprint(item)
-        params = {"patch_id": patch_id, "project_path": item["project_path"], "fingerprint": fingerprint, "check": selected}
-        auth = request_authorization("test_project_patch", params, "Execute staged project code only inside one resource-limited Docker capsule.", confirmation_token)
-        if auth is not None:
-            return auth
-        if not _check_lock.acquire(blocking=False):
-            return {"status": "busy", "error": "Another capsule check is running."}
-        item["state"] = "testing"
-        item["capsule_result"] = None
+    acquired = False
+    try:
+        with _patch_lock:
+            _cleanup_patches()
+            item = _patches.get(patch_id)
+            if not item or item["state"] != "staging" or not item["files"]:
+                return {"status": "not_found", "error": "An active staged project patch is required."}
+            try:
+                from src.project_workspace import _patch_policy_error
+            except ImportError:
+                from project_workspace import _patch_policy_error
+            if error := _patch_policy_error(item): return error
+            selected = _check_name(item, check)
+            if selected is None:
+                return {"status": "error", "error": "auto requires staged source in one language (Python or JavaScript); choose an explicit check otherwise."}
+            image, error = _preflight(selected)
+            if error:
+                return {"status": "unavailable", "error": error}
+            fingerprint = _fingerprint(item)
+            params = {"patch_id": patch_id, "project_path": item["project_path"], "fingerprint": fingerprint, "check": selected}
+            auth = request_authorization("test_project_patch", params, "Execute staged project code only inside one resource-limited Docker capsule.", confirmation_token)
+            if auth is not None:
+                return auth
+            if not _check_lock.acquire(blocking=False):
+                return {"status": "busy", "error": "Another capsule check is running."}
+            acquired = True
+            item["state"] = "testing"
+            item["expires_at"] = time.time() + 120
+            item["capsule_result"] = None
+    except BaseException:
+        if acquired:
+            _check_lock.release()
+        raise
     descriptor = None
     started = time.monotonic()
     result: Dict[str, Any] = {}
@@ -396,14 +406,18 @@ def test_project_patch(patch_id: str, check: str = "auto", confirmation_token: O
             os.close(descriptor)
         if result:
             result["audit_log_path"] = record_audit_event("test_project_patch", params, {key: result.get(key) for key in ("status", "success", "check", "candidate_fingerprint", "duration_seconds")})
-        with _patch_lock:
-            current = _patches.get(patch_id)
-            if current is item:
-                item["state"] = "staging"
-                item["capsule_result"] = {key: result.get(key) for key in ("status", "success", "check", "candidate_fingerprint", "duration_seconds")}
-        _check_lock.release()
+        try:
+            with _patch_lock:
+                current = _patches.get(patch_id)
+                if current and current["state"] == "testing" and _fingerprint(current) == fingerprint:
+                    current["state"] = "staging"
+                    current["expires_at"] = time.time() + 86400
+                    current["capsule_result"] = {key: result.get(key) for key in ("status", "success", "check", "candidate_fingerprint", "duration_seconds")}
+        finally:
+            _check_lock.release()
 
 
+@storage_errors
 def promote_tested_project_patch(patch_id: str, confirmation_token: Optional[str] = None) -> Dict[str, Any]:
     """Apply only the same candidate that passed a capsule, using patch confirmation/backups."""
     with _patch_lock:
@@ -414,4 +428,4 @@ def promote_tested_project_patch(patch_id: str, confirmation_token: Optional[str
         tested = item.get("capsule_result") or {}
         if not tested.get("success") or tested.get("candidate_fingerprint") != _fingerprint(item):
             return {"status": "forbidden", "error": "This exact candidate has not passed a capsule check."}
-        return apply_project_patch(patch_id, confirmation_token)
+    return apply_project_patch(patch_id, confirmation_token, _require_tested=True)

@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import access_policy, safety
 from src.resource_policy import get_workspace_settings, save_workspace_settings
 from src.operator_projects import list_operator_projects, inspect_operator_project
+from src.operation_store import list_operations, get_operation
 
 if os.environ.get("PANEL_TEST_POLICY_DIR"):
     access_policy.policy_directory = lambda: os.environ["PANEL_TEST_POLICY_DIR"]
@@ -56,6 +57,8 @@ mcp.tool()(get_workspace_settings)
 mcp.tool()(save_workspace_settings)
 mcp.tool()(list_operator_projects)
 mcp.tool()(inspect_operator_project)
+mcp.tool()(list_operations)
+mcp.tool()(get_operation)
 
 if __name__ == "__main__":
     mcp.run()

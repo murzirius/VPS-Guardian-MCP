@@ -15,6 +15,7 @@ import time
 import sys
 import json
 from typing import Any, Dict, List, Optional
+from src.operation_store import PersistentDrafts, storage_errors
 
 try:
     from src.files import _redact_config_text, atomic_write_file
@@ -40,11 +41,11 @@ MAX_EDIT_REPLACEMENT = 50_000
 MAX_PATCHES = 24
 MAX_PATCH_FILES = 3
 MAX_PATCH_BYTES = 300_000
-PATCH_TTL_SECONDS = 300
+PATCH_TTL_SECONDS = 86400
 MAX_DIFF_CHARS = 12_000
 IGNORED_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".next", "vps-guardian-access"}
-_patches: Dict[str, Dict[str, Any]] = {}
-_patch_lock = threading.RLock()
+_patches = PersistentDrafts("patch", MAX_PATCHES)
+_patch_lock = _patches
 
 
 def _roots() -> List[str]:
@@ -299,9 +300,7 @@ def search_project_code(project_path: str, query: str, max_matches: int = 50) ->
 
 
 def _cleanup_patches() -> None:
-    now = time.time()
-    for patch_id in [key for key, item in _patches.items() if item["expires_at"] <= now]: _patches.pop(patch_id, None)
-    while len(_patches) >= MAX_PATCHES: _patches.pop(min(_patches, key=lambda key: _patches[key]["expires_at"]), None)
+    _patches.cleanup()
 
 
 def _patch_policy_error(item: dict) -> Optional[dict]:
@@ -316,6 +315,7 @@ def _patch_policy_error(item: dict) -> Optional[dict]:
     return None
 
 
+@storage_errors
 def begin_project_patch(project_path: str, title: str) -> Dict[str, Any]:
     project, error = _project_path(project_path)
     if error: return error
@@ -326,6 +326,7 @@ def begin_project_patch(project_path: str, title: str) -> Dict[str, Any]:
     return {"status": "ok", "patch": _public_patch(item)}
 
 
+@storage_errors
 def stage_project_file_change(patch_id: str, relative_path: str, content: str) -> Dict[str, Any]:
     if not isinstance(content, str) or len(content.encode("utf-8")) > MAX_FILE_READ: return {"status": "error", "error": "content must be text up to 100,000 bytes."}
     with _patch_lock:
@@ -360,6 +361,7 @@ def _line_edit_candidate(raw: bytes, start_line: int, end_line: int, replacement
     return candidate.encode("utf-8"), original
 
 
+@storage_errors
 def stage_project_line_edit(patch_id: str, relative_path: str, start_line: int, end_line: int, replacement: str, expected_sha256: Optional[str] = None) -> Dict[str, Any]:
     """Stage a source edit by line range; the model only sends the changed text."""
     if not isinstance(replacement, str) or len(replacement.encode("utf-8")) > MAX_EDIT_REPLACEMENT:
@@ -395,6 +397,7 @@ def stage_project_line_edit(patch_id: str, relative_path: str, start_line: int, 
         return {"status": "ok", "file": _public_file(entry), "patch": _public_patch(item)}
 
 
+@storage_errors
 def preview_project_patch(patch_id: str) -> Dict[str, Any]:
     with _patch_lock:
         _cleanup_patches(); item = _patches.get(patch_id)
@@ -416,11 +419,17 @@ def preview_project_patch(patch_id: str) -> Dict[str, Any]:
         return {"status": "confirmation_required" if auth else "ok", "patch": _public_patch(item), "diffs": diffs, "execution": auth, "confirmation_token": auth.get("confirmation_token") if auth else None}
 
 
-def apply_project_patch(patch_id: str, confirmation_token: Optional[str] = None) -> Dict[str, Any]:
+@storage_errors
+def apply_project_patch(patch_id: str, confirmation_token: Optional[str] = None, *, _require_tested: bool = False) -> Dict[str, Any]:
     with _patch_lock:
         _cleanup_patches(); item = _patches.get(patch_id)
         if not item or item["state"] != "staging" or not item["files"]: return {"status": "not_found", "success": False, "error": "An active patch with staged files is required."}
         if error := _patch_policy_error(item): return {**error, "success": False}
+        if _require_tested:
+            from src.test_capsules import _fingerprint
+            tested = item.get("capsule_result") or {}
+            if not tested.get("success") or tested.get("candidate_fingerprint") != _fingerprint(item):
+                return {"status": "forbidden", "success": False, "error": "This exact candidate has not passed a capsule check."}
         params = {"patch_id": patch_id, "project_path": item["project_path"], "files": [_public_file(entry) for entry in item["files"]]}
         auth = request_authorization("apply_project_patch", params, "Apply a bounded source patch with backups; no code is executed.", confirmation_token)
         if auth is not None: return auth
@@ -441,10 +450,16 @@ def apply_project_patch(patch_id: str, confirmation_token: Optional[str] = None)
             else:
                 pending_writes.append((entry["path"], entry["content"]))
         item["state"] = "applying"
+        item["expires_at"] = time.time() + 120
     writes = [atomic_write_file(path, content, backup=True) for path, content in pending_writes]
     success = all(item.get("success") for item in writes)
-    with _patch_lock: _patches.pop(patch_id, None)
     result = {"status": "ok" if success else "error", "success": success, "patch_id": patch_id, "writes": writes, "note": "Use run_project_checks after applying; source code was not executed automatically."}
+    with _patch_lock:
+        current = _patches.get(patch_id)
+        if current:
+            current["state"] = "completed" if success else "failed"
+            current["result"] = {"status": result["status"], "success": success}
+            _patches.pop(patch_id, None)
     result["audit_log_path"] = record_audit_event("apply_project_patch", params, result)
     return result
 

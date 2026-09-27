@@ -24,7 +24,7 @@
 </aside>
 <section class="dashboard" aria-label="MCP access management">
 <div class="card server-card"><div class="server-icon">▤</div><div class="server-title"><h2 id="server-name">No server connected</h2><p id="server-detail" class="muted small">Enter your connection details on the left</p></div><span id="connection-status" class="status">Disconnected</span></div>
-<nav class="panel-nav" aria-label="Operator sections"><button type="button" data-section="access" aria-pressed="true">Access</button><button type="button" data-section="projects" aria-pressed="false">Projects</button><button type="button" data-section="limits" aria-pressed="false">Limits</button></nav>
+<nav class="panel-nav" aria-label="Operator sections"><button type="button" data-section="access" aria-pressed="true">Access</button><button type="button" data-section="projects" aria-pressed="false">Projects</button><button type="button" data-section="limits" aria-pressed="false">Limits</button><button type="button" data-section="operations" aria-pressed="false">Operations</button></nav>
 <section id="section-access" class="card access-card">
 <div class="section-top"><h2>MCP Access</h2><span id="access-badge" class="small-tag">Not loaded</span></div>
 <p id="access-help" class="muted small">Connect to Guardian 0.30.0+ to load the server-side access policy.</p>
@@ -71,6 +71,16 @@
 <p id="limits-save-state" class="muted small" aria-live="polite">Connect to Guardian 0.31.0+ to load limits.</p>
 <p id="limits-host" class="boundary-note"></p>
 <p class="boundary-note">Capsule isolation stays fixed: 128 MiB RAM, 0.5 CPU, 30 seconds, 4 KiB output. These cooperative limits do not impose a global CPU/RAM quota, cancel in-flight operations or constrain ordinary SSH. Upgrade every agent's server executable to 0.31.0+ and reconnect once.</p>
+</section>
+<section id="section-operations" class="card access-card" hidden>
+<div class="section-top"><h2>Operations</h2><button id="reload-operations" type="button" class="refresh" disabled>Refresh history</button></div>
+<p class="muted small">Shared with agents on this server, under this SSH user. Staged changes survive reconnects; this view never executes, approves or retries them.</p>
+<div id="operations-message" class="notice" role="status" hidden></div>
+<div class="form-row"><div><label for="operation-search">Search loaded operations</label><input id="operation-search" placeholder="Title, path or operation ID…" maxlength="160" spellcheck="false"></div><div><label for="operation-filter">Show</label><select id="operation-filter"><option value="all">All loaded</option><option value="active">Active</option><option value="finished">Finished</option><option value="attention">Needs inspection</option></select></div></div>
+<p id="operations-status" class="field-help" aria-live="polite">Connect to Guardian 0.32.0+ to load shared operations.</p>
+<div id="operations-list" class="operations-list"><p class="muted small">No history loaded.</p></div>
+<div id="operation-details" class="metadata"><p class="muted small">Select an operation to inspect its metadata.</p></div>
+<p class="boundary-note">Drafts expire after 24 hours. Up to 200 finished records are retained for 30 days; source payloads are removed on completion or expiry. An interrupted write can be uncertain: inspect live files, never blindly repeat it. Confirmation tokens remain session-local; preview again after reconnecting. Jobs have their own TTL and 100-record cap.</p>
 </section>
 <details class="monitoring"><summary>Server overview <span class="muted small">optional · read-only · 30s refresh</span></summary>
 <div class="metrics">

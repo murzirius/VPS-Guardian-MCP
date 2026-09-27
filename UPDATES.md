@@ -10,6 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.32.0] - 2026-09-27
+
+### Added
+- English Operations tab in the local panel: shared patches/ChangeSets and Agent Jobs, search, status filters, metadata inspection and 30-second refresh while open. No source, raw outputs or confirmation tokens are returned; the panel does not execute or approve operations.
+- Persistent per-SSH-user draft storage with serialized cross-process updates, 24-hour draft TTL, bounded state timelines, compact outcomes, 30-day/200-record history retention and stable pagination via `list_operations` / `get_operation`. Active drafts are never silently evicted.
+- Agent Jobs now use a fixed private shared directory, independent of session launch state settings. Existing legacy job databases are preserved, not automatically imported; complete important old jobs before upgrading.
+
+### Fixes and boundaries
+- Persist an apply/check claim before executing; expired claims become uncertain and are never replayed. Resumed candidates recheck policy, live budgets and fingerprints; confirmation tokens remain process-local. Capsule promotion revalidates the tested fingerprint under the apply claim.
+- Bound active draft payloads to 9 MB each / 32 MB total, draft database to 48 MiB and jobs database to 8 MiB; validate private files and SQLite sidecars. Remove source payloads from completed/expired records using SQLite secure deletion. Storage is private, not encrypted; no global RAM/CPU quota or transactional filesystem recovery is implied.
+- Open private binary state descriptors in binary mode on Windows: text-mode read/write opens could truncate a trailing 0x1A and corrupt SQLite indexes. Bound URL-credential redaction to avoid quadratic scans.
+- Integration/regression tests cover process reconnects, single-use session confirmations, concurrent claims, capacity rollback, uncertain writes, private history, timestamp-tied pagination and real operator-helper transport. Upgrade every agent server environment to 0.32.0+ and reconnect once.
+
+---
+
 ## [0.31.0] - 2026-09-27
 
 ### Added

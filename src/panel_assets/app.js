@@ -10,6 +10,7 @@
   let limitsRevision = null, limitsDirty = false, limitsReload = false;
   let projectsResult = null, projectResult = null;
   let updateTimer;
+  let operationSignature = null, selectedOperation = null, operationsRefreshed = 0, operationsLoading = false;
   const labels = {disconnected:'Disconnected', connecting:'Connecting…', connected:'Connected', disconnecting:'Disconnecting…', error:'Connection error'};
   function notice(message) { $('notice').textContent = message || ''; $('notice').hidden = !message; }
   async function api(path, body) {
@@ -88,6 +89,7 @@
       button.setAttribute('aria-pressed', String(selected));
       $('section-' + button.dataset.section).hidden = !selected;
     }
+    if (name === 'operations') refreshOperations();
   }
   for (const button of document.querySelectorAll('[data-section]')) button.addEventListener('click', () => section(button.dataset.section));
   function textNode(tag, text, className) {
@@ -166,6 +168,7 @@
   }
   function render(data) {
     state = data;
+    renderOperations(data);
     const connection = data.connection;
     $('connection-status').textContent = labels[connection] || 'Unknown';
     $('connection-status').className = 'status ' + connection;
@@ -262,10 +265,69 @@
     $('inherit-roots').checked = false; $('project-roots').value = state.project.path; dirty = true; dependencies(); section('access');
     $('policy-save-state').textContent = 'Project root prepared. Review the Access settings and Apply permissions to enforce it.';
   });
+  const finishedStates = new Set(['completed','failed','rolled_back','expired','cancelled','uncertain']);
+  function renderOperations(data) {
+    if (data.connection !== 'connected') operationsRefreshed = 0;
+    $('reload-operations').disabled = data.connection !== 'connected' || !data.operations_supported || data.policy_busy;
+    $('operations-message').textContent = data.operations_error || data.operations?.jobs_error || '';
+    $('operations-message').hidden = !$('operations-message').textContent;
+    $('operations-status').textContent = data.operations ? 'Latest ' + data.operations.operations.length + ' changes · ' + data.operations.jobs.length + (data.operations.jobs.length === 1 ? ' job.' : ' jobs.') + ' Refreshes every 30 seconds while this tab is open.' : data.operations_supported && data.connection === 'connected' ? data.policy_busy ? 'Loading shared operations…' : 'Open Operations or click Refresh history to load shared state.' : 'Connect to Guardian 0.32.0+ to load shared operations.';
+    if (data.operations && data.connection !== 'connected') $('operations-status').textContent = 'Stale snapshot. Reconnect and refresh to see current server state.';
+    const signature = JSON.stringify([data.operations, $('operation-search').value, $('operation-filter').value, selectedOperation]);
+    if (operationSignature !== signature) {
+      operationSignature = signature;
+      const list = $('operations-list'); list.replaceChildren();
+      const operations = [...(data.operations?.operations || []), ...(data.operations?.jobs || []).map(job => ({...job, operation_id:job.job_id, kind:'job', state:job.status}))];
+      const term = $('operation-search').value.toLowerCase().trim(), filter = $('operation-filter').value;
+      const visible = operations.filter(op => (!term || [op.title, op.target, op.operation_id].join(' ').toLowerCase().includes(term)) && (filter === 'all' || filter === 'active' && !finishedStates.has(op.state) || filter === 'finished' && finishedStates.has(op.state) || filter === 'attention' && ['failed','rolled_back','uncertain','action_uncertain','needs_attention'].includes(op.state)));
+      for (const op of visible) {
+        const row = document.createElement('button'); row.type = 'button'; row.className = 'operation-row'; row.setAttribute('aria-pressed', String(op.operation_id === selectedOperation));
+        const text = document.createElement('span'); text.append(textNode('strong', op.title || op.operation_id), textNode('small', op.kind + ' · ' + (op.target || op.operation_id), 'muted'));
+        row.append(text, textNode('span', op.state.replaceAll('_', ' '), 'small-tag')); row.addEventListener('click', async () => {
+          selectedOperation = op.operation_id; renderOperations(state);
+          try { render(await api('operations/inspect', {operation_id:op.operation_id})); } catch (error) { notice(error.message); }
+        }); list.append(row);
+      }
+      if (!visible.length) list.append(textNode('p', data.operations ? 'No matching operations.' : 'No history loaded.', 'muted small'));
+    }
+    for (const button of $('operations-list').querySelectorAll('button')) button.disabled = data.policy_busy || data.connection !== 'connected';
+    const box = $('operation-details'); box.replaceChildren();
+    const detail = data.operation?.operation || data.operation?.job;
+    if (!detail || (detail.operation_id || detail.job_id) !== selectedOperation) {
+      box.append(textNode('p', selectedOperation && data.policy_busy ? 'Loading operation…' : 'Select an operation to inspect its metadata.', 'muted small')); return;
+    }
+    // Prefer the fresh list snapshot after periodic reload over an older detail response.
+    const fresh = data.operations?.operations?.find(op => op.operation_id === selectedOperation) || data.operations?.jobs?.find(op => op.job_id === selectedOperation) || detail;
+    box.append(textNode('h3', fresh.title), textNode('p', fresh.operation_id || fresh.job_id, 'muted small'));
+    const status = fresh.state || fresh.status;
+    for (const [name, value] of [['State', status], ['Target', fresh.target], ['Files', fresh.file_count], ['Created', fresh.created_at], ['Outcome', fresh.result?.status]]) {
+      if (value === undefined || value === null || value === '') continue;
+      const row = document.createElement('div'); row.className = 'metadata-row'; row.append(textNode('span', name), textNode('strong', String(value))); box.append(row);
+    }
+    if (['uncertain','action_uncertain'].includes(status)) box.append(textNode('p', 'Execution may have started. Inspect live state before preparing a new operation. Nothing will be replayed automatically.', 'boundary-note'));
+    for (const file of fresh.files || []) {
+      const details = document.createElement('details'); details.append(textNode('summary', file.relative_path || file.file_path));
+      details.append(textNode('p', 'Baseline SHA-256: ' + (file.baseline_sha256 || 'New file'), 'field-help'), textNode('p', 'Candidate SHA-256: ' + file.candidate_sha256, 'field-help')); box.append(details);
+    }
+    for (const event of fresh.events || []) {
+      const row = document.createElement('div'); row.className = 'metadata-row'; row.append(textNode('span', new Date(event.at * 1000).toLocaleString('en-GB')), textNode('span', event.state + ' · ' + event.file_count + (event.file_count === 1 ? ' file' : ' files'))); box.append(row);
+    }
+    if (fresh.job_id && fresh.revision !== detail.revision) box.append(textNode('p', 'Job changed. Select it again to reload check details.', 'muted small'));
+    else for (const check of data.operation?.checks || []) box.append(textNode('p', check.name + ' · ' + check.status, 'muted small'));
+  }
+  async function refreshOperations(force = false) {
+    if (operationsLoading || !state?.operations_supported || state.connection !== 'connected' || state.policy_busy || !force && Date.now() - operationsRefreshed < 30000) return;
+    operationsLoading = true;
+    try { render(await api('operations/reload', {})); operationsRefreshed = Date.now(); } catch (error) { notice(error.message); }
+    finally { operationsLoading = false; }
+  }
+  $('reload-operations').addEventListener('click', () => refreshOperations(true));
+  $('operation-search').addEventListener('input', () => { if (state) renderOperations(state); });
+  $('operation-filter').addEventListener('change', () => { if (state) renderOperations(state); });
   async function update() {
     clearTimeout(updateTimer);
     if (!token) { notice('Open the full private link printed when the panel starts. After reloading, you will need that link again.'); $('connect').disabled = true; return; }
-    try { render(await api('status')); }
+    try { render(await api('status')); if (!$('section-operations').hidden) refreshOperations(); }
     catch (error) { notice(error.name === 'TimeoutError' || error.name === 'TypeError' ? 'The local panel is not responding. Check that its process is still running.' : error.message); }
     updateTimer = setTimeout(update, state?.policy_busy || state?.connection === 'connecting' || state?.connection === 'disconnecting' ? 1000 : 3000);
   }

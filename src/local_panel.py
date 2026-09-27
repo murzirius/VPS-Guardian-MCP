@@ -29,7 +29,7 @@ from mcp.client.stdio import stdio_client
 
 DEFAULT_REMOTE = "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp"
 ALLOWED_TOOLS = frozenset({"get_safety_status", "get_system_health", "get_failed_systemd_units"})
-ADMIN_TOOLS = frozenset({"get_access_policy", "save_access_policy", "get_workspace_settings", "save_workspace_settings", "list_operator_projects", "inspect_operator_project"})
+ADMIN_TOOLS = frozenset({"get_access_policy", "save_access_policy", "get_workspace_settings", "save_workspace_settings", "list_operator_projects", "inspect_operator_project", "list_operations", "get_operation"})
 POLL_SECONDS = 30
 REQUEST_TIMEOUT = 20
 MAX_BODY = 8192
@@ -217,7 +217,8 @@ class PanelController:
                                      "updated_at": None, "poll_seconds": POLL_SECONDS, "read_only": True,
                                      "access": None, "access_error": None, "access_supported": False, "policy_busy": False,
                                      "workspace": None, "workspace_supported": False, "workspace_error": None,
-                                     "projects": None, "project": None, "projects_error": None}
+                                     "projects": None, "project": None, "projects_error": None,
+                                     "operations": None, "operation": None, "operations_error": None, "operations_supported": False}
 
     def status(self):
         with self.lock:
@@ -237,6 +238,7 @@ class PanelController:
             self.state.update(connection="connecting", snapshot=None, error=None, updated_at=None,
                               access=None, access_error=None, access_supported=False, policy_busy=False,
                               workspace=None, workspace_supported=False, workspace_error=None, projects=None, project=None, projects_error=None,
+                              operations=None, operation=None, operations_error=None, operations_supported=False,
                               target={"host": config["host"], "user": config["user"], "port": config["port"]})
             self.thread = threading.Thread(target=self._worker, args=(params, admin_params), daemon=True)
             self.thread.start()
@@ -247,7 +249,8 @@ class PanelController:
             self.policy_job = None
             self.state.update(connection="disconnecting" if self.thread and self.thread.is_alive() else "disconnected",
                               snapshot=None, updated_at=None, error=None, access=None, policy_busy=False,
-                              workspace=None, workspace_supported=False, projects=None, project=None)
+                              workspace=None, workspace_supported=False, projects=None, project=None,
+                              operations=None, operation=None, operations_supported=False, operations_error=None)
 
     def policy_request(self, data=None):
         if data is not None:
@@ -298,16 +301,22 @@ class PanelController:
         elif name == "inspect_operator_project":
             if not isinstance(data, dict) or set(data) != {"project_path"} or not isinstance(data["project_path"], str) or not data["project_path"] or len(data["project_path"]) > 1024 or any(ord(c) < 32 for c in data["project_path"]):
                 raise PanelInputError("Supply one absolute project directory.")
+        elif name == "get_operation":
+            from src.operation_store import OPERATION_ID
+            if not isinstance(data, dict) or set(data) != {"operation_id"} or not isinstance(data["operation_id"], str) or not OPERATION_ID.fullmatch(data["operation_id"]):
+                raise PanelInputError("Supply one valid operation ID.")
         elif data != {}:
             raise PanelInputError("This operation takes no arguments.")
         with self.lock:
+            if name in {"list_operations", "get_operation"} and not self.state["operations_supported"]:
+                raise RuntimeError("Upgrade Guardian on the VPS to 0.32.0+ and reconnect before using Operations.")
             if self.state["connection"] != "connected" or not self.state["workspace_supported"]:
                 raise RuntimeError("Upgrade Guardian on the VPS to 0.31.0+ and reconnect before using Projects and Limits.")
             if self.state["policy_busy"]:
                 raise RuntimeError("An operator request is already running.")
             self.policy_job = (name, copy.deepcopy(data))
             self.state.update(policy_busy=True)
-            self.state["projects_error" if "project" in name else "workspace_error"] = None
+            self.state["operations_error" if name in {"list_operations", "get_operation"} else "projects_error" if "project" in name else "workspace_error"] = None
 
     def close(self):
         self.disconnect()
@@ -336,14 +345,18 @@ class PanelController:
                             await session.initialize()
                             return await read_tool(session, name, arguments, admin=True)
                 result = await asyncio.wait_for(exchange(), REQUEST_TIMEOUT)
-                field = "access" if name in {"get_access_policy", "save_access_policy"} else "projects" if name == "list_operator_projects" else "project" if name == "inspect_operator_project" else "workspace"
-                error_field = "access_error" if field == "access" else "projects_error" if field in {"projects", "project"} else "workspace_error"
+                field = "operations" if name == "list_operations" else "operation" if name == "get_operation" else "access" if name in {"get_access_policy", "save_access_policy"} else "projects" if name == "list_operator_projects" else "project" if name == "inspect_operator_project" else "workspace"
+                error_field = "operations_error" if field in {"operations", "operation"} else "access_error" if field == "access" else "projects_error" if field in {"projects", "project"} else "workspace_error"
                 if result.get("status") == "ok":
                     if field == "access":
                         from src.access_policy import validate_policy
                         validate_policy(result["policy"])
                         if not isinstance(result.get("revision"), str) or not isinstance(result.get("catalog"), list):
                             raise ValueError("Invalid helper reply")
+                    elif field == "operations" and (not isinstance(result.get("operations"), list) or not isinstance(result.get("jobs"), list)):
+                        raise ValueError("Invalid operations reply")
+                    elif field == "operation" and not isinstance(result.get("operation", result.get("job")), dict):
+                        raise ValueError("Invalid operation reply")
                     elif field == "workspace":
                         from src.resource_policy import validate_settings
                         validate_settings(result["settings"])
@@ -359,6 +372,7 @@ class PanelController:
                             self.state[error_field] = None
                             if field == "access":
                                 supported = result.get("workspace_settings_supported") is True and isinstance(result.get("workspace"), dict)
+                                self.state["operations_supported"] = result.get("operations_supported") is True
                                 self.state["workspace_supported"] = supported
                                 self.state["workspace"] = result.get("workspace") if supported else None
                                 # Scope may have changed. Discard stale project metadata.
@@ -367,11 +381,13 @@ class PanelController:
                     with self.lock:
                         self.state[error_field] = ("Settings changed elsewhere. Reload before applying your changes."
                                                   if result.get("status") == "conflict" else "Operator request failed. Check project roots, supported values and directory permissions.")
+                        if field == "operation":
+                            self.state["operation"] = None
                         if field == "project":
                             self.state["project"] = None
             except Exception as exc:
                 with self.lock:
-                    error_field = "access_error" if name in {"get_access_policy", "save_access_policy"} else "projects_error" if "project" in name else "workspace_error"
+                    error_field = "operations_error" if name in {"list_operations", "get_operation"} else "access_error" if name in {"get_access_policy", "save_access_policy"} else "projects_error" if "project" in name else "workspace_error"
                     self.state[error_field] = "Operator helper unavailable. Install the current Guardian release in the same environment as the MCP executable. " + connection_error(tail(), exc)["message"]
             finally:
                 with self.lock:
@@ -479,22 +495,34 @@ class PanelHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def _reject(self, code, message):
+        # Consume only a small, unambiguously framed body before closing.
+        # Otherwise Windows can reset the connection and hide the 401/403.
+        lengths = self.headers.get_all("Content-Length") or []
+        if self.command == "POST" and not self.headers.get_all("Transfer-Encoding") and len(lengths) == 1 and re.fullmatch(r"[0-9]{1,5}", lengths[0]) and int(lengths[0]) <= MAX_BODY:
+            try:
+                self.rfile.read(int(lengths[0]))
+            except OSError:
+                pass
+        self.close_connection = True
+        self._send(code, {"error": message})
+
     def _authorized(self, api=False, mutation=False):
         if self.headers.get_all("Host") != [self.server.expected_host]:
-            self._send(403, {"error": "Invalid Host."})
+            self._reject(403, "Invalid Host.")
             return False
         origins = self.headers.get_all("Origin") or []
         if origins and origins != [self.server.origin] or mutation and origins != [self.server.origin]:
-            self._send(403, {"error": "The request must originate from the local panel."})
+            self._reject(403, "The request must originate from the local panel.")
             return False
         if self.headers.get("Sec-Fetch-Site", "none") not in ("none", "same-origin"):
-            self._send(403, {"error": "Cross-site request rejected."})
+            self._reject(403, "Cross-site request rejected.")
             return False
         if api:
             values = self.headers.get_all("Authorization") or []
             expected = "Bearer " + self.server.token
             if len(values) != 1 or not secrets.compare_digest(values[0].encode(), expected.encode()):
-                self._send(401, {"error": "Open the private link printed when the panel starts."})
+                self._reject(401, "Open the private link printed when the panel starts.")
                 return False
         return True
 
@@ -548,9 +576,10 @@ class PanelHandler(BaseHTTPRequestHandler):
                 self.server.controller.policy_request(data)
             elif path == "/api/policy/reload" and data == {}:
                 self.server.controller.policy_request()
-            elif path in {"/api/limits", "/api/limits/reload", "/api/projects/reload", "/api/projects/inspect"}:
+            elif path in {"/api/limits", "/api/limits/reload", "/api/projects/reload", "/api/projects/inspect", "/api/operations/reload", "/api/operations/inspect"}:
                 names = {"/api/limits": "save_workspace_settings", "/api/limits/reload": "get_workspace_settings",
-                         "/api/projects/reload": "list_operator_projects", "/api/projects/inspect": "inspect_operator_project"}
+                         "/api/projects/reload": "list_operator_projects", "/api/projects/inspect": "inspect_operator_project",
+                         "/api/operations/reload": "list_operations", "/api/operations/inspect": "get_operation"}
                 self.server.controller.workspace_request(names[path], data)
             elif path in ("/api/disconnect", "/api/refresh") and data == {}:
                 getattr(self.server.controller, "disconnect" if path.endswith("disconnect") else "refresh")()

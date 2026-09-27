@@ -7,9 +7,9 @@ import difflib
 import hashlib
 import os
 import secrets
-import threading
 import time
 from typing import Any, Dict, List, Optional
+from src.operation_store import PersistentDrafts, storage_errors
 
 try:
     from src.deploy import _run_systemctl
@@ -31,10 +31,10 @@ MAX_CHANGESETS = 32
 MAX_FILES_PER_CHANGESET = 3
 MAX_FILE_BYTES = 200_000
 MAX_TOTAL_BYTES = 400_000
-CHANGESET_TTL_SECONDS = 300
+CHANGESET_TTL_SECONDS = 86400
 MAX_DIFF_CHARS = 12_000
-_sets: Dict[str, Dict[str, Any]] = {}
-_lock = threading.RLock()
+_sets = PersistentDrafts("changeset", MAX_CHANGESETS)
+_lock = _sets
 
 
 def _digest(data: bytes) -> str:
@@ -42,11 +42,7 @@ def _digest(data: bytes) -> str:
 
 
 def _cleanup() -> None:
-    now = time.time()
-    for change_id in [key for key, item in _sets.items() if item["expires_at"] <= now]:
-        _sets.pop(change_id, None)
-    while len(_sets) >= MAX_CHANGESETS:
-        _sets.pop(min(_sets, key=lambda key: _sets[key]["expires_at"]), None)
+    _sets.cleanup()
 
 
 def _active(change_id: str) -> Optional[Dict[str, Any]]:
@@ -62,6 +58,7 @@ def _service_for_path(path: str) -> Optional[str]:
     return None
 
 
+@storage_errors
 def begin_change_set(title: str, target: Optional[str] = None) -> Dict[str, Any]:
     if not isinstance(title, str) or not 3 <= len(title.strip()) <= 160:
         return {"status": "error", "error": "title must contain 3 to 160 characters."}
@@ -75,6 +72,7 @@ def begin_change_set(title: str, target: Optional[str] = None) -> Dict[str, Any]
     return {"status": "ok", "change_set": _public(item)}
 
 
+@storage_errors
 def stage_file_change(change_set_id: str, file_path: str, content: str) -> Dict[str, Any]:
     if not isinstance(content, str):
         return {"status": "error", "error": "content must be a string."}
@@ -109,6 +107,7 @@ def stage_file_change(change_set_id: str, file_path: str, content: str) -> Dict[
     return {"status": "ok", "change_set": _public(item), "file": _public_file(entry)}
 
 
+@storage_errors
 def preview_change_set(change_set_id: str) -> Dict[str, Any]:
     with _lock:
         item = _active(change_set_id)
@@ -127,6 +126,7 @@ def preview_change_set(change_set_id: str) -> Dict[str, Any]:
         return result
 
 
+@storage_errors
 def apply_change_set(change_set_id: str, confirmation_token: Optional[str] = None) -> Dict[str, Any]:
     with _lock:
         item = _active(change_set_id)
@@ -143,6 +143,7 @@ def apply_change_set(change_set_id: str, confirmation_token: Optional[str] = Non
             if not allowed or stable != entry["file_path"] or os.path.islink(stable) or (_digest(current) if os.path.isfile(stable) else None) != entry["baseline_sha256"]:
                 return {"status": "conflict", "success": False, "error": "A staged file changed after planning; create a new ChangeSet."}
         item["state"] = "applying"
+        item["expires_at"] = time.time() + 120
 
     writes = []
     for entry in item["files"]:
@@ -161,8 +162,13 @@ def apply_change_set(change_set_id: str, confirmation_token: Optional[str] = Non
                 try: os.remove(entry["file_path"]); rollback.append({"success": True, "file_path": entry["file_path"]})
                 except OSError as exc: rollback.append({"success": False, "error": str(exc), "file_path": entry["file_path"]})
         _run_systemctl("reload", item["service"])
-    with _lock: _sets.pop(change_set_id, None)
     result = {"status": "ok" if success else "rolled_back", "success": success, "change_set_id": change_set_id, "writes": writes, "validation": validation, "reload": reload_result, "health": healthy, "rolled_back": not success and all(entry.get("success") for entry in rollback), "rollback": rollback}
+    with _lock:
+        current = _sets.get(change_set_id)
+        if current:
+            current["state"] = "completed" if success else "rolled_back" if result["rolled_back"] else "failed"
+            current["result"] = {key: result[key] for key in ("status", "success", "rolled_back")}
+            _sets.pop(change_set_id, None)
     result["audit_log_path"] = record_audit_event("apply_change_set", parameters, result)
     return result
 

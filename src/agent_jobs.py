@@ -17,7 +17,8 @@ from contextlib import contextmanager
 from typing import Any, Dict, Iterator, Optional
 
 try:
-    from src.agent_runtime import _scrub, _state_dir, get_agent_session
+    from src.agent_runtime import _scrub, get_agent_session
+    from src.operation_store import job_directory as _state_dir
     from src.agent_efficiency import get_server_event_delta, get_workload_brief, summarize_service_logs
     from src.monitor import SERVICE_NAME_REGEX, check_service_status, get_system_health
     from src.recover import run_recovery_action
@@ -25,7 +26,8 @@ try:
     from src.safety import _redact
     from src.safe_io import private_directory, open_regular_fd
 except ImportError:  # pragma: no cover - direct script compatibility
-    from agent_runtime import _scrub, _state_dir, get_agent_session
+    from agent_runtime import _scrub, get_agent_session
+    from operation_store import job_directory as _state_dir
     from agent_efficiency import get_server_event_delta, get_workload_brief, summarize_service_logs
     from monitor import SERVICE_NAME_REGEX, check_service_status, get_system_health
     from recover import run_recovery_action
@@ -56,13 +58,20 @@ def _iso(value: Optional[dt.datetime] = None) -> str:
 def _transaction() -> Iterator[sqlite3.Connection]:
     directory = private_directory(_state_dir())
     path = os.path.join(directory, "agent-jobs.sqlite3")
-    if os.path.islink(path):
-        raise OSError("Agent Jobs database must not be a symlink.")
-    if os.path.exists(path):
-        descriptor = open_regular_fd(path, private=True)
+    descriptor = open_regular_fd(path, os.O_RDWR | os.O_CREAT, private=True)
+    try:
+        if os.fstat(descriptor).st_size > 8 * 1024 * 1024:
+            raise OSError("Agent Jobs database exceeds its size limit.")
+    finally:
         os.close(descriptor)
+    for suffix in ("-journal", "-wal", "-shm"):
+        if os.path.lexists(path + suffix):
+            descriptor = open_regular_fd(path + suffix, private=True)
+            os.close(descriptor)
     connection = sqlite3.connect(path, timeout=5)
     try:
+        connection.execute("PRAGMA max_page_count=2048")
+        connection.execute("PRAGMA secure_delete=ON")
         if os.name != "nt":
             os.chmod(path, 0o600)
         connection.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, record TEXT NOT NULL)")

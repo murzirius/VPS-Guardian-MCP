@@ -34,7 +34,7 @@ _SENSITIVE_TEXT_PATTERN = re.compile(
     r"(?i)\b(password|passwd|secret|token|api[_-]?key|private[_-]?key|"
     r'''credential|authorization|cookie)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n]+)'''
 )
-_URL_CREDENTIAL_PATTERN = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+(@)")
+_URL_CREDENTIAL_PATTERN = re.compile(r"(://)[^\s/@]+(@)")
 MAX_AUDIT_BYTES = 4 * 1024 * 1024
 MAX_AUDIT_TAIL = 256 * 1024
 _pending_confirmations: Dict[str, Dict[str, Any]] = {}

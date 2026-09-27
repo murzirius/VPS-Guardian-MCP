@@ -457,6 +457,7 @@ _TOOL_PROFILE = os.environ.get("VPS_GUARDIAN_TOOL_PROFILE", "full").strip().lowe
 if _TOOL_PROFILE not in {"core", "full"}:
     raise ValueError("VPS_GUARDIAN_TOOL_PROFILE must be core or full.")
 _CORE_TOOLS = {
+    "list_operations", "get_operation",
     "get_system_health", "get_top_processes", "check_service_status", "read_service_logs",
     "get_vps_topology", "find_workload", "get_workload_health", "diagnose_workload",
     "get_change_impact", "prepare_repair_plan", "get_runtime_budget", "get_safety_status",
@@ -1026,6 +1027,20 @@ def finish_agent_task(task_id: str, session_id: str, outcome: str, result: str =
 def list_agent_tasks(status: Optional[str] = None, include_finished: bool = False, limit: int = 100) -> str:
     """List prioritized tasks and release expired leases on demand."""
     return json.dumps(_list_agent_tasks(status, include_finished, limit), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def list_operations(limit: int = 25, before: Optional[str] = None) -> str:
+    """List shared persistent drafts/history and Agent Jobs; metadata only, no source or tokens. Paginate drafts/history with next_before."""
+    from src.operation_store import list_operations as call
+    return json.dumps(call(limit, before), separators=(",", ":"), ensure_ascii=False)
+
+
+@guardian_tool()
+def get_operation(operation_id: str) -> str:
+    """Read shared operation metadata, bounded timeline and outcome after reconnect; never executes or approves anything."""
+    from src.operation_store import get_operation as call
+    return json.dumps(call(operation_id), separators=(",", ":"), ensure_ascii=False)
 
 
 @guardian_tool()

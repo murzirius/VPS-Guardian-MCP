@@ -34,14 +34,14 @@ The English-language panel runs **on your computer, not on the VPS or this proje
 With [uv](https://docs.astral.sh/uv/) installed on your computer:
 
 ```bash
-uvx --from vps-guardian-mcp==0.31.0 vps-guardian-panel
+uvx --from vps-guardian-mcp==0.32.0 vps-guardian-panel
 ```
 
 Without uv, install in a local virtual environment. Windows PowerShell:
 
 ```powershell
 py -m venv .guardian-panel
-.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.31.0
+.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.32.0
 .\.guardian-panel\Scripts\python.exe -m src.local_panel
 ```
 
@@ -49,16 +49,16 @@ Linux/macOS:
 
 ```bash
 python3 -m venv .guardian-panel
-.guardian-panel/bin/pip install vps-guardian-mcp==0.31.0
+.guardian-panel/bin/pip install vps-guardian-mcp==0.32.0
 .guardian-panel/bin/vps-guardian-panel
 ```
 
-The browser opens automatically. Enter the VPS address, SSH user, port and **path** to your local key, not its contents. Leave the key field empty to use ssh-agent; load encrypted keys into the agent beforehand. Advanced settings accept the Guardian executable path on the VPS and an optional local known_hosts file. Access management requires Guardian **0.30.0+ on the VPS**; Projects and Limits require **0.31.0+**, with the adjacent `vps-guardian-access` executable from the same installation. Older compatible installations can show monitoring only, with an upgrade warning. No server-side web service is installed.
+The browser opens automatically. Enter the VPS address, SSH user, port and **path** to your local key, not its contents. Leave the key field empty to use ssh-agent; load encrypted keys into the agent beforehand. Advanced settings accept the Guardian executable path on the VPS and an optional local known_hosts file. Access management requires Guardian **0.30.0+ on the VPS**; Projects and Limits require **0.31.0+**, Operations requires **0.32.0+**, with the adjacent `vps-guardian-access` executable from the same installation. Older compatible installations can show monitoring only, with an upgrade warning. No server-side web service is installed.
 
 To upgrade an existing pip installation on the VPS:
 
 ```bash
-/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.31.0
+/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.32.0
 ```
 
 Upgrade any other Guardian environments used by your agents, then reconnect **all agents once** so they start the policy-aware server. Subsequent permission changes affect new calls in those sessions without a restart. In-flight operations are not cancelled, and cached client tool lists may still show disabled tools; calls to those tools are rejected.
@@ -88,6 +88,18 @@ Editable budgets cover project-file reads (up to 300,000 bytes when host guards 
 
 Cached project patches recheck current roots and resource limits before preview, staging, testing and applying. A revoked or over-budget candidate must be replaced with an allowed, smaller patch. Configuration ChangeSets also recheck live limits before applying.
 
+#### Shared Operations and reconnects
+
+**Operations** requires Guardian **0.32.0+ on the VPS and on your computer**. The English panel shows the latest 25 project patches/ChangeSets and up to 25 Agent Jobs, with search, state filters, file fingerprints and a bounded event timeline. Click a record to inspect metadata. Refresh is manual or every 30 seconds while the tab is open; it uses the separate short-lived operator helper, including while agent access is paused. This view **does not execute, approve, cancel or retry changes**. There is no additional always-on VPS worker.
+
+Agents use `list_operations(limit=10)` and `get_operation(operation_id="...")` to retrieve the same metadata. `next_before` is an opaque cursor for older draft/history pages; pass it back as `before`. Job lists are separately bounded latest snapshots, not part of that cursor. Normal MCP tool permissions still apply; the human operator's helper is separate. History is per SSH user, not per individual agent or current project root: everyone granted these history tools under that account can see operation metadata.
+
+Staged project patches and configuration ChangeSets now persist in private SQLite storage at `~/.local/share/vps-guardian-access/operations/`. A draft survives MCP/panel reconnects for **24 hours**, with the existing 24-patch/32-ChangeSet active caps. Active drafts are never silently evicted; storage-full errors require completing an allowed draft or waiting for expiry. Payloads are bounded to 9 MB each and 32 MB total; the SQLite database is capped at 48 MiB. Completed/expired source payloads are removed and their metadata retained for at most **30 days / 200 records**. Retention is enforced on requests, not by a background cleanup daemon. Active candidate/original source can contain secrets: files use private permissions, **not encryption**, and must be protected with the SSH account and disk backups. Panel/history replies never include source, raw command output or confirmation tokens. Secret redaction is best-effort; avoid secrets in titles and paths.
+
+After reconnecting, preview the same staged ID again to obtain a **new session-local confirmation token**, then apply with the existing tool. Current mode, roots, budgets and live-file fingerprints are rechecked; persistence does not grant access or approve a write. A claimed apply/check has a 120-second lease. If it outlives that lease without a stored outcome, history marks it **uncertain**, drops the candidate and never replays it. Inspect live files/services before preparing a replacement. This history is not a transactional filesystem journal or an automatic rollback guarantee.
+
+New Agent Jobs use the same fixed private operation directory, independently of `VPS_GUARDIAN_STATE_DIR`; their existing leases, job TTL and 100-record cap remain. Their database is capped at 8 MiB. **Upgrade note:** previous releases kept jobs in the old state directory and drafts only in RAM. Old job databases remain untouched and are not automatically imported into shared storage; finish important old jobs before upgrading. Old in-memory drafts cannot be recovered after the old process exits. Upgrade all server environments used by agents and reconnect once.
+
 SSH host-key verification is mandatory. Verify the fingerprint independently and connect once with ordinary SSH before using the panel. The dashboard does not accept unknown keys or use custom SSH config/aliases, ProxyCommand or jump hosts: enter a directly reachable IP/hostname. A changed host key must be investigated, not bypassed.
 
 Connection settings and snapshots stay in memory; the panel never uploads or reads private-key contents. One MCP connection samples metrics every 30 seconds; manual refresh is limited to once per 10 seconds. Unavailable metrics are shown as unavailable, not zero. No failed systemd units is **not** a guarantee all applications are healthy. If the connection fails, retained metrics are marked stale.
@@ -103,7 +115,7 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.31.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.32.0
 ```
 
 For development from source instead:
@@ -147,7 +159,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.31.0",
+        "@murzirius/vps-guardian-mcp@0.32.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -176,7 +188,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.31.0
+@murzirius/vps-guardian-mcp@0.32.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -196,7 +208,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.31.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.32.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.

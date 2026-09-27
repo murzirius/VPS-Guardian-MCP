@@ -16,6 +16,9 @@ from src import project_workspace, test_capsules
 class TestCapsules(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
+        self.storage = mock.patch("src.access_policy.policy_directory", return_value=os.path.join(self.temp.name, "policy"))
+        self.storage.start()
+        self.addCleanup(self.storage.stop)
         self.environment = mock.patch.dict(os.environ, {
             "VPS_GUARDIAN_PROJECT_ROOTS": self.temp.name,
             "VPS_GUARDIAN_STATE_DIR": os.path.join(self.temp.name, "state"),

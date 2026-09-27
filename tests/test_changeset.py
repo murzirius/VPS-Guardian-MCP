@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+import os
 from unittest.mock import patch
 
 from src import changeset
@@ -10,6 +12,11 @@ from src import changeset
 
 class TestChangeSets(unittest.TestCase):
     def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        storage = patch("src.access_policy.policy_directory", return_value=os.path.join(self.temp.name, "policy"))
+        storage.start()
+        self.addCleanup(storage.stop)
         changeset._sets.clear()
 
     def test_empty_changeset_cannot_be_previewed(self):

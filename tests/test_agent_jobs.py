@@ -16,7 +16,7 @@ from src import agent_jobs
 class TestAgentJobs(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.environment = mock.patch.dict(os.environ, {"VPS_GUARDIAN_STATE_DIR": self.temporary.name, "VPS_GUARDIAN_MODE": "controlled"})
+        self.environment = mock.patch.dict(os.environ, {"HOME": self.temporary.name, "USERPROFILE": self.temporary.name, "VPS_GUARDIAN_STATE_DIR": self.temporary.name, "VPS_GUARDIAN_MODE": "controlled"})
         self.environment.start()
         self.budget = mock.patch("src.agent_jobs.get_runtime_budget", return_value={"profile": "standard"})
         self.budget.start()

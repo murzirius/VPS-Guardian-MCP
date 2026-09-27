@@ -149,7 +149,7 @@ def get_access_policy() -> dict[str, Any]:
     from src import __version__
     from src.resource_policy import get_workspace_settings
     return {"status": "ok", **load_policy(), "catalog": list(tool_catalog()), "version": __version__,
-            "workspace_settings_supported": True, "workspace": get_workspace_settings(),
+            "workspace_settings_supported": True, "workspace": get_workspace_settings(), "operations_supported": True,
             "scope": "All upgraded Guardian MCP processes running as this SSH user.",
             "human_approval_enforced": False, "os_isolation": False}
 
@@ -185,6 +185,9 @@ def main():
     server.tool()(save_workspace_settings)
     server.tool()(list_operator_projects)
     server.tool()(inspect_operator_project)
+    from src.operation_store import list_operations, get_operation
+    server.tool()(list_operations)
+    server.tool()(get_operation)
     server.run()
 
 

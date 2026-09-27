@@ -37,7 +37,9 @@ def open_regular_fd(path: str, flags: int = os.O_RDONLY, mode: int = 0o600, priv
     """Open without blocking on FIFOs, then reject non-regular files and unsafe private files."""
     absolute = os.path.abspath(path)
     with directory_fd(os.path.dirname(absolute)) as parent:
-        options = flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        # Windows CRT text-mode O_RDWR can truncate a trailing 0x1a on OPEN,
+        # even when no write follows. SQLite/state files must always be binary.
+        options = flags | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         if parent is None:
             if os.path.islink(absolute):
                 raise OSError("Symlinked file refused.")
