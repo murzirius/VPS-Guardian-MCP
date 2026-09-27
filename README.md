@@ -27,6 +27,40 @@ VPS Guardian has two parts:
 - Python 3.10+ on the VPS and Node.js 16+ on the AI client's computer.
 - A verified SSH host key. Password-based SSH is intentionally unsupported by the launcher.
 
+### Optional: local browser dashboard
+
+The dashboard runs **on your computer, not on the VPS or this project's website**. It shows CPU, RAM, root-disk usage, swap, uptime and failed systemd units through a read-only MCP-over-SSH connection. It cannot edit files or restart services. The npm package remains the MCP launcher; the dashboard comes with the Python package.
+
+With [uv](https://docs.astral.sh/uv/) installed on your computer:
+
+```bash
+uvx --from vps-guardian-mcp==0.29.0 vps-guardian-panel
+```
+
+Without uv, install in a local virtual environment. Windows PowerShell:
+
+```powershell
+py -m venv .guardian-panel
+.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.29.0
+.\.guardian-panel\Scripts\python.exe -m src.local_panel
+```
+
+Linux/macOS:
+
+```bash
+python3 -m venv .guardian-panel
+.guardian-panel/bin/pip install vps-guardian-mcp==0.29.0
+.guardian-panel/bin/vps-guardian-panel
+```
+
+The browser opens automatically. Enter the VPS address, SSH user, port and **path** to your local key, not its contents. Leave the key field empty to use ssh-agent; load encrypted keys into the agent beforehand. Advanced settings accept the Guardian executable path on the VPS and an optional local known_hosts file. The dashboard works with an existing compatible Guardian installation that exposes the three monitoring/safety tools, including 0.28.1; no server-side web service is installed.
+
+SSH host-key verification is mandatory. Verify the fingerprint independently and connect once with ordinary SSH before using the panel. The dashboard does not accept unknown keys or use custom SSH config/aliases, ProxyCommand or jump hosts: enter a directly reachable IP/hostname. A changed host key must be investigated, not bypassed.
+
+Connection settings and snapshots stay in memory; the panel never uploads or reads private-key contents. One MCP connection samples metrics every 30 seconds; manual refresh is limited to once per 10 seconds. Unavailable metrics are shown as unavailable, not zero. No failed systemd units is **not** a guarantee all applications are healthy. If the connection fails, retained metrics are marked stale.
+
+Keep the printed local link private: its fragment is a per-launch access token. The token stays in tab memory and is removed from the address bar; after reloading, reopen the full printed link. `Ctrl+C` in the launch terminal stops the panel and its connection. `--no-browser` only prints the link; `--port 8765` selects a loopback port. Do not reverse-proxy or expose this local dashboard publicly. Loopback/token checks do not protect against malware running as your local user; read-only MCP is not OS-level isolation from an SSH account with broad rights.
+
 ### 1. Install the server on the VPS
 
 Run once on the VPS. This installs the published, pinned release:
@@ -36,13 +70,13 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.28.1
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.29.0
 ```
 
 For development from source instead:
 
 ```bash
-git clone --branch v0.28.1 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
+git clone --branch v0.29.0 https://github.com/murzirius/VPS-Guardian-MCP.git /opt/vps-guardian-mcp
 cd /opt/vps-guardian-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -80,7 +114,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.28.1",
+        "@murzirius/vps-guardian-mcp@0.29.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -109,7 +143,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.28.1
+@murzirius/vps-guardian-mcp@0.29.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -129,7 +163,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.28.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.29.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.

@@ -47,4 +47,6 @@ jobs:
         with:
           node-version: "20"
       - name: Validate npm launcher
-        run: npm test
+        run: |
+          npm test
+          node --check src/panel_assets/app.js

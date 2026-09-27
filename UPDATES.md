@@ -10,6 +10,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.29.0] - 2026-09-27
+
+### Added
+- Optional local, dark, read-only browser dashboard: SSH connection form, CPU/RAM/root-disk usage, swap, uptime and failed systemd units. Launch with `vps-guardian-panel` from the Python package on the user's computer; the npm launcher remains the SSH stdio client.
+- One persistent MCP-over-SSH session, 30-second metric refresh, rate-limited manual refresh, bounded service display and actionable SSH error categories. Connections and metrics stay in memory; no SSH keys are uploaded or read by the panel.
+
+### Safety
+- Bind only to `127.0.0.1`, use a per-launch bearer capability, reject unexpected Host/Origin/fetch-site headers, cap local request bodies and concurrent HTTP handlers, and send no-store/CSP headers. No arbitrary commands or tool calls are exposed.
+- Force read-only mode, verify the server confirms it before reading metrics, require SSH host-key verification, disable forwarding and interactive authentication, ignore custom SSH config, and quote the remote executable. This is a read-only dashboard, not independent approval or privilege isolation.
+- Integration tests exercise the actual SDK stdio transport against a test peer; HTTP tests cover authorization, cross-site requests, rebinding and validation. Failed-unit checks do not prove application health.
+
+---
+
 ## [0.28.1] - 2026-09-26
 
 ### Security fixes

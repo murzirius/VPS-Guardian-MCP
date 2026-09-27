@@ -45,6 +45,14 @@ class TestReleaseMetadata(unittest.TestCase):
             {"@murzirius/vps-guardian-mcp", "vps-guardian-mcp"},
         )
 
+    def test_panel_entrypoint_and_asset_package_data(self):
+        from importlib import resources
+        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('vps-guardian-panel = "src.local_panel:main"', pyproject)
+        self.assertIn('"panel_assets/*.html"', pyproject)
+        for name in ("index.html", "app.js", "style.css"):
+            self.assertGreater(len(resources.files("src").joinpath("panel_assets", name).read_bytes()), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
