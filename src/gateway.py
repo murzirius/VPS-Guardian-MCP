@@ -47,10 +47,13 @@ def _account(agent_id: str) -> str:
 
 
 def _public_key(value: str) -> tuple[str, str]:
-    if not isinstance(value, str) or len(value) > 1024 or "\n" in value or "\r" in value or '"' in value:
+    if not isinstance(value, str) or len(value) > 1024:
         raise ValueError("Supply one Ed25519 SSH public key, never a private key.")
-    parts = value.strip().split()
-    if len(parts) < 2 or parts[0] != "ssh-ed25519" or len(parts) > 3:
+    value = value.strip()
+    if "\n" in value or "\r" in value or '"' in value:
+        raise ValueError("Supply one Ed25519 SSH public key, never a private key.")
+    parts = value.split(maxsplit=2)
+    if len(parts) < 2 or parts[0] != "ssh-ed25519":
         raise ValueError("Only a plain ssh-ed25519 public key is supported.")
     try:
         raw = base64.b64decode(parts[1], validate=True)

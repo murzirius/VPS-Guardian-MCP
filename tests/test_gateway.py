@@ -26,6 +26,8 @@ class TestGatewayValidation(unittest.TestCase):
         key, fingerprint = gateway._public_key(public_key())
         self.assertTrue(key.startswith("ssh-ed25519 "))
         self.assertTrue(fingerprint.startswith("SHA256:"))
+        self.assertEqual(gateway._public_key(public_key() + "\r\n"), (key, fingerprint))
+        self.assertEqual(gateway._public_key(public_key() + " key with a comment"), (key, fingerprint))
         for bad in ("ssh-rsa AAAA", "command=whoami " + public_key(),
                     public_key().replace("test", "x\ncommand=whoami"),
                     "ssh-ed25519 " + base64.b64encode(b"wrong").decode()):
