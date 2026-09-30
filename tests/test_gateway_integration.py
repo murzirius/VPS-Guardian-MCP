@@ -31,7 +31,7 @@ class TestGatewaySSH(unittest.TestCase):
 
     def _exercise_profile(self, profile):
         self.assertEqual(os.geteuid(), 0)
-        base = Path("/opt/guardian-gateway-ci")
+        base = Path("/var/lib/guardian-gateway-ci")
         self.assertTrue(base.is_dir())
         agent_id = "ci-" + os.urandom(6).hex()
         account = gateway._account(agent_id)
@@ -51,6 +51,9 @@ class TestGatewaySSH(unittest.TestCase):
             def trace(frame, event, arg):
                 if event == "exception" and frame.f_code.co_filename == gateway.__file__:
                     diagnostics.append((frame.f_lineno, arg[0].__name__, str(arg[1])))
+                    if frame.f_code.co_name == "_trusted_directory":
+                        current = frame.f_locals.get("current")
+                        diagnostics.append(("directory", str(current), oct(current.lstat().st_mode), current.lstat().st_uid))
                 return trace
             with patch("src.gateway.sys.argv", [str(base / "venv" / "bin" / "vps-guardian-access")]):
                 sys.settrace(trace)
