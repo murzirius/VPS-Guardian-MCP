@@ -233,6 +233,7 @@ def record_audit_event(
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "operation": operation,
         "safety_mode": get_safety_mode(),
+        "gateway_agent": os.environ.get("VPS_GUARDIAN_GATEWAY_AGENT"),
         "parameters": _redact(parameters),
         "result": {
             "status": result.get("status", "unknown"),

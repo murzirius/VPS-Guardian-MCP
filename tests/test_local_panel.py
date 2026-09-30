@@ -44,6 +44,9 @@ class FakeController:
     def workspace_request(self, name, data):
         self.calls.append((name, data))
 
+    def gateway_request(self, name, data):
+        self.calls.append((name, data))
+
 
 class TestPanelHTTP(unittest.TestCase):
     def setUp(self):
@@ -109,12 +112,17 @@ class TestPanelHTTP(unittest.TestCase):
         self.assertFalse(self.controller.calls)
 
     def test_operator_endpoints_require_token_and_same_origin(self):
-        for path in ("/api/policy", "/api/policy/reload", "/api/limits", "/api/limits/reload", "/api/projects/reload", "/api/projects/inspect", "/api/operations/reload", "/api/operations/inspect"):
+        for path in ("/api/policy", "/api/policy/reload", "/api/limits", "/api/limits/reload", "/api/projects/reload", "/api/projects/inspect", "/api/operations/reload", "/api/operations/inspect", "/api/gateway/list", "/api/gateway/create", "/api/gateway/revoke"):
             self.assertEqual(self.request("POST", path, {}, {**self.auth(), "Authorization": "Bearer invalid"})[0], 401)
             self.assertEqual(self.request("POST", path, {}, {**self.auth(), "Origin": "https://evil.example"})[0], 403)
         self.assertFalse(self.controller.calls)
         self.assertEqual(self.request("POST", "/api/policy/reload", {}, self.auth())[0], 202)
         self.assertEqual(self.controller.calls, [("policy", None)])
+
+    def test_gateway_routes_are_fixed_operator_calls(self):
+        self.assertEqual(self.request("POST", "/api/gateway/list", {}, self.auth())[0], 202)
+        self.assertEqual(self.controller.calls, [("list_agents", {})])
+        self.assertEqual(self.request("POST", "/api/gateway/execute", {}, self.auth())[0], 404)
 
     def test_panel_is_english_and_permissions_are_primary(self):
         html = self.request(path="/")[2].decode()
@@ -124,6 +132,7 @@ class TestPanelHTTP(unittest.TestCase):
         self.assertIn('data-section="projects"', html)
         self.assertIn('data-section="limits"', html)
         self.assertIn('data-section="operations"', html)
+        self.assertIn('data-section="gateway"', html)
         self.assertIn("Effective on VPS", html)
         for path in ("/", "/app.js"):
             self.assertNotRegex(self.request(path=path)[2].decode(), r"[А-Яа-яёЁ]")

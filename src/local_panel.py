@@ -29,7 +29,7 @@ from mcp.client.stdio import stdio_client
 
 DEFAULT_REMOTE = "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp"
 ALLOWED_TOOLS = frozenset({"get_safety_status", "get_system_health", "get_failed_systemd_units"})
-ADMIN_TOOLS = frozenset({"get_access_policy", "save_access_policy", "get_workspace_settings", "save_workspace_settings", "list_operator_projects", "inspect_operator_project", "list_operations", "get_operation"})
+ADMIN_TOOLS = frozenset({"get_access_policy", "save_access_policy", "get_workspace_settings", "save_workspace_settings", "list_operator_projects", "inspect_operator_project", "list_operations", "get_operation", "list_agents", "create_agent", "revoke_agent"})
 POLL_SECONDS = 30
 REQUEST_TIMEOUT = 20
 MAX_BODY = 8192
@@ -218,7 +218,8 @@ class PanelController:
                                      "access": None, "access_error": None, "access_supported": False, "policy_busy": False,
                                      "workspace": None, "workspace_supported": False, "workspace_error": None,
                                      "projects": None, "project": None, "projects_error": None,
-                                     "operations": None, "operation": None, "operations_error": None, "operations_supported": False}
+                                     "operations": None, "operation": None, "operations_error": None, "operations_supported": False,
+                                     "gateway_agents": None, "gateway_error": None, "gateway_supported": False}
 
     def status(self):
         with self.lock:
@@ -239,6 +240,7 @@ class PanelController:
                               access=None, access_error=None, access_supported=False, policy_busy=False,
                               workspace=None, workspace_supported=False, workspace_error=None, projects=None, project=None, projects_error=None,
                               operations=None, operation=None, operations_error=None, operations_supported=False,
+                              gateway_agents=None, gateway_error=None, gateway_supported=False,
                               target={"host": config["host"], "user": config["user"], "port": config["port"]})
             self.thread = threading.Thread(target=self._worker, args=(params, admin_params), daemon=True)
             self.thread.start()
@@ -250,7 +252,8 @@ class PanelController:
             self.state.update(connection="disconnecting" if self.thread and self.thread.is_alive() else "disconnected",
                               snapshot=None, updated_at=None, error=None, access=None, policy_busy=False,
                               workspace=None, workspace_supported=False, projects=None, project=None,
-                              operations=None, operation=None, operations_supported=False, operations_error=None)
+                              operations=None, operation=None, operations_supported=False, operations_error=None,
+                              gateway_agents=None, gateway_supported=False, gateway_error=None)
 
     def policy_request(self, data=None):
         if data is not None:
@@ -318,6 +321,33 @@ class PanelController:
             self.state.update(policy_busy=True)
             self.state["operations_error" if name in {"list_operations", "get_operation"} else "projects_error" if "project" in name else "workspace_error"] = None
 
+    def gateway_request(self, name, data):
+        if name not in {"list_agents", "create_agent", "revoke_agent"}:
+            raise PanelInputError("Unsupported gateway operation.")
+        if name == "create_agent":
+            from src.gateway import AGENT_ID
+            if (not isinstance(data, dict) or set(data) != {"agent_id", "public_key", "project_roots", "profile", "expires_hours"}
+                    or not isinstance(data["agent_id"], str) or not AGENT_ID.fullmatch(data["agent_id"])
+                    or not isinstance(data["public_key"], str) or len(data["public_key"]) > 1024
+                    or not isinstance(data["project_roots"], list) or len(data["project_roots"]) > 8
+                    or any(not isinstance(root, str) or len(root) > 1024 for root in data["project_roots"])
+                    or not isinstance(data["profile"], str) or data["profile"] not in {"observer", "project-editor"}
+                    or type(data["expires_hours"]) is not int or not 1 <= data["expires_hours"] <= 168):
+                raise PanelInputError("Invalid agent name, public key, project roots or expiry.")
+        elif name == "revoke_agent":
+            from src.gateway import AGENT_ID
+            if not isinstance(data, dict) or set(data) != {"agent_id"} or not isinstance(data["agent_id"], str) or not AGENT_ID.fullmatch(data["agent_id"]):
+                raise PanelInputError("Supply one valid agent ID.")
+        elif data != {}:
+            raise PanelInputError("This operation takes no arguments.")
+        with self.lock:
+            if self.state["connection"] != "connected" or not self.state["gateway_supported"]:
+                raise RuntimeError("Upgrade Guardian on the VPS and reconnect before using Gateway.")
+            if self.state["policy_busy"]:
+                raise RuntimeError("An operator request is already running.")
+            self.policy_job = (name, copy.deepcopy(data))
+            self.state.update(policy_busy=True, gateway_error=None)
+
     def close(self):
         self.disconnect()
         if self.thread:
@@ -345,8 +375,8 @@ class PanelController:
                             await session.initialize()
                             return await read_tool(session, name, arguments, admin=True)
                 result = await asyncio.wait_for(exchange(), REQUEST_TIMEOUT)
-                field = "operations" if name == "list_operations" else "operation" if name == "get_operation" else "access" if name in {"get_access_policy", "save_access_policy"} else "projects" if name == "list_operator_projects" else "project" if name == "inspect_operator_project" else "workspace"
-                error_field = "operations_error" if field in {"operations", "operation"} else "access_error" if field == "access" else "projects_error" if field in {"projects", "project"} else "workspace_error"
+                field = "gateway_agents" if name in {"list_agents", "create_agent", "revoke_agent"} else "operations" if name == "list_operations" else "operation" if name == "get_operation" else "access" if name in {"get_access_policy", "save_access_policy"} else "projects" if name == "list_operator_projects" else "project" if name == "inspect_operator_project" else "workspace"
+                error_field = "gateway_error" if field == "gateway_agents" else "operations_error" if field in {"operations", "operation"} else "access_error" if field == "access" else "projects_error" if field in {"projects", "project"} else "workspace_error"
                 if result.get("status") == "ok":
                     if field == "access":
                         from src.access_policy import validate_policy
@@ -364,15 +394,18 @@ class PanelController:
                             raise ValueError("Invalid limits reply")
                     elif field == "projects" and not isinstance(result.get("projects"), list):
                         raise ValueError("Invalid projects reply")
+                    elif field == "gateway_agents" and name == "list_agents" and not isinstance(result.get("agents"), list):
+                        raise ValueError("Invalid gateway reply")
                     elif field == "project" and not isinstance(result.get("files"), list):
                         raise ValueError("Invalid project reply")
                     with self.lock:
                         if not self.stop.is_set():
-                            self.state[field] = result
+                            self.state[field] = None if field == "gateway_agents" and name != "list_agents" else result
                             self.state[error_field] = None
                             if field == "access":
                                 supported = result.get("workspace_settings_supported") is True and isinstance(result.get("workspace"), dict)
                                 self.state["operations_supported"] = result.get("operations_supported") is True
+                                self.state["gateway_supported"] = result.get("gateway_supported") is True
                                 self.state["workspace_supported"] = supported
                                 self.state["workspace"] = result.get("workspace") if supported else None
                                 # Scope may have changed. Discard stale project metadata.
@@ -380,14 +413,14 @@ class PanelController:
                 else:
                     with self.lock:
                         self.state[error_field] = ("Settings changed elsewhere. Reload before applying your changes."
-                                                  if result.get("status") == "conflict" else "Operator request failed. Check project roots, supported values and directory permissions.")
+                                                  if result.get("status") == "conflict" else result.get("error", "Gateway request failed.") if field == "gateway_agents" else "Operator request failed. Check project roots, supported values and directory permissions.")
                         if field == "operation":
                             self.state["operation"] = None
                         if field == "project":
                             self.state["project"] = None
             except Exception as exc:
                 with self.lock:
-                    error_field = "operations_error" if name in {"list_operations", "get_operation"} else "access_error" if name in {"get_access_policy", "save_access_policy"} else "projects_error" if "project" in name else "workspace_error"
+                    error_field = "gateway_error" if name in {"list_agents", "create_agent", "revoke_agent"} else "operations_error" if name in {"list_operations", "get_operation"} else "access_error" if name in {"get_access_policy", "save_access_policy"} else "projects_error" if "project" in name else "workspace_error"
                     self.state[error_field] = "Operator helper unavailable. Install the current Guardian release in the same environment as the MCP executable. " + connection_error(tail(), exc)["message"]
             finally:
                 with self.lock:
@@ -581,6 +614,9 @@ class PanelHandler(BaseHTTPRequestHandler):
                          "/api/projects/reload": "list_operator_projects", "/api/projects/inspect": "inspect_operator_project",
                          "/api/operations/reload": "list_operations", "/api/operations/inspect": "get_operation"}
                 self.server.controller.workspace_request(names[path], data)
+            elif path in {"/api/gateway/list", "/api/gateway/create", "/api/gateway/revoke"}:
+                names = {"/api/gateway/list": "list_agents", "/api/gateway/create": "create_agent", "/api/gateway/revoke": "revoke_agent"}
+                self.server.controller.gateway_request(names[path], data)
             elif path in ("/api/disconnect", "/api/refresh") and data == {}:
                 getattr(self.server.controller, "disconnect" if path.endswith("disconnect") else "refresh")()
             else:

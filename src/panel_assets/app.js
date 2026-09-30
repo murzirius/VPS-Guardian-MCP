@@ -11,6 +11,7 @@
   let projectsResult = null, projectResult = null;
   let updateTimer;
   let operationSignature = null, selectedOperation = null, operationsRefreshed = 0, operationsLoading = false;
+  let gatewayReloadPending = false;
   const labels = {disconnected:'Disconnected', connecting:'Connecting…', connected:'Connected', disconnecting:'Disconnecting…', error:'Connection error'};
   function notice(message) { $('notice').textContent = message || ''; $('notice').hidden = !message; }
   async function api(path, body) {
@@ -90,6 +91,7 @@
       $('section-' + button.dataset.section).hidden = !selected;
     }
     if (name === 'operations') refreshOperations();
+    if (name === 'gateway') refreshGateway();
   }
   for (const button of document.querySelectorAll('[data-section]')) button.addEventListener('click', () => section(button.dataset.section));
   function textNode(tag, text, className) {
@@ -169,6 +171,7 @@
   function render(data) {
     state = data;
     renderOperations(data);
+    renderGateway(data);
     const connection = data.connection;
     $('connection-status').textContent = labels[connection] || 'Unknown';
     $('connection-status').className = 'status ' + connection;
@@ -265,6 +268,57 @@
     $('inherit-roots').checked = false; $('project-roots').value = state.project.path; dirty = true; dependencies(); section('access');
     $('policy-save-state').textContent = 'Project root prepared. Review the Access settings and Apply permissions to enforce it.';
   });
+  function renderGateway(data) {
+    const supported = data.connection === 'connected' && data.gateway_supported;
+    const available = supported && !data.policy_busy;
+    $('reload-gateway').disabled = !available;
+    $('gateway-fields').disabled = !available;
+    $('gateway-create').disabled = !available;
+    $('gateway-message').textContent = data.gateway_error || '';
+    $('gateway-message').hidden = !data.gateway_error;
+    $('gateway-status').textContent = !supported ? 'Connect as a VPS administrator to Guardian with Gateway support.' :
+      data.policy_busy ? 'Gateway request in progress…' : data.gateway_agents ?
+      data.gateway_agents.agents.length + ' agent account(s). Access is checked on every MCP call.' :
+      'Refresh agents to load the server state.';
+    const list = $('gateway-agents'); list.replaceChildren();
+    for (const agent of data.gateway_agents?.agents || []) {
+      const card = document.createElement('div'); card.className = 'operation-row';
+      const description = document.createElement('span');
+      description.append(textNode('strong', agent.agent_id + ' · ' + agent.account),
+        textNode('small', agent.profile + ' · ' + agent.mode_cap + ' · expires ' + new Date(agent.expires_at).toLocaleString('en-GB'), 'muted'),
+        textNode('small', agent.project_roots.join(', ') || 'No project directories', 'muted'),
+        textNode('small', 'Use this account and the agent’s private key in its MCP client.', 'muted'));
+      const controls = document.createElement('span');
+      controls.append(textNode('small', !agent.enabled ? 'Revoked' : Date.parse(agent.expires_at) <= Date.now() ? 'Expired' : 'Active', 'small-tag'));
+      if (agent.enabled) {
+        const revoke = document.createElement('button'); revoke.type = 'button'; revoke.className = 'refresh';
+        revoke.textContent = 'Revoke'; revoke.disabled = !available;
+        revoke.addEventListener('click', async () => {
+          if (!confirm('Revoke ' + agent.agent_id + '? The SSH key will be removed and future MCP calls denied. Running work cannot be cancelled.')) return;
+          try { gatewayReloadPending = true; render(await api('gateway/revoke', {agent_id:agent.agent_id})); }
+          catch (error) { notice(error.message); }
+        }); controls.append(revoke);
+      }
+      card.append(description, controls); list.append(card);
+    }
+    if (!list.children.length) list.append(textNode('p', data.gateway_agents ? 'No gateway agents enrolled.' : 'No agents loaded.', 'muted small'));
+  }
+  async function refreshGateway() {
+    if (state?.connection !== 'connected' || !state.gateway_supported || state.policy_busy) return;
+    try { render(await api('gateway/list', {})); } catch (error) { notice(error.message); }
+  }
+  $('reload-gateway').addEventListener('click', refreshGateway);
+  $('gateway-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (state?.connection !== 'connected' || !state.gateway_supported || state.policy_busy) return;
+    const agent_id = $('gateway-id').value.trim();
+    const public_key = $('gateway-key').value.trim();
+    const project_roots = $('gateway-roots').value.split('\n').map(line => line.trim()).filter(Boolean);
+    const profile = $('gateway-profile').value;
+    if (!confirm('Create a new password-locked Unix account for ' + agent_id + ' on the VPS with the ' + profile + ' profile?')) return;
+    try { gatewayReloadPending = true; render(await api('gateway/create', {agent_id, public_key, project_roots, profile, expires_hours:Number($('gateway-expiry').value)})); }
+    catch (error) { notice(error.message); }
+  });
   const finishedStates = new Set(['completed','failed','rolled_back','expired','cancelled','uncertain']);
   function renderOperations(data) {
     if (data.connection !== 'connected') operationsRefreshed = 0;
@@ -327,7 +381,12 @@
   async function update() {
     clearTimeout(updateTimer);
     if (!token) { notice('Open the full private link printed when the panel starts. After reloading, you will need that link again.'); $('connect').disabled = true; return; }
-    try { render(await api('status')); if (!$('section-operations').hidden) refreshOperations(); }
+    try { render(await api('status')); if (!$('section-operations').hidden) refreshOperations();
+      if (gatewayReloadPending && state?.connection === 'connected' && !state.policy_busy) {
+        gatewayReloadPending = false;
+        if (!state.gateway_error) refreshGateway();
+      }
+    }
     catch (error) { notice(error.name === 'TimeoutError' || error.name === 'TypeError' ? 'The local panel is not responding. Check that its process is still running.' : error.message); }
     updateTimer = setTimeout(update, state?.policy_busy || state?.connection === 'connecting' || state?.connection === 'disconnecting' ? 1000 : 3000);
   }

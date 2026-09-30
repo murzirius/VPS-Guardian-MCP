@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vps-guardian-mcp"
-version = "0.32.1"
+version = "0.33.0"
 description = "Secure MCP server for Linux VPS observability, guarded administration, and AI-agent collaboration."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,6 +47,7 @@ dev = [
 vps-guardian-mcp = "src.server:main"
 vps-guardian-panel = "src.local_panel:main"
 vps-guardian-access = "src.access_policy:main"
+vps-guardian-gateway = "src.gateway:main"
 
 [tool.setuptools.package-data]
 src = ["panel_assets/*.html", "panel_assets/*.css", "panel_assets/*.js"]

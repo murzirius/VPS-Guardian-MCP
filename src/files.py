@@ -97,6 +97,13 @@ def is_path_permitted(target_path: str) -> tuple[bool, str]:
     if control_path(canonical_target):
         return False, canonical_target
     allowed_dirs = get_allowed_directories()
+    if os.environ.get("VPS_GUARDIAN_GATEWAY_AGENT") is not None:
+        from src.access_policy import managed_project_roots
+        roots = managed_project_roots() or []
+        allowed_dirs = [item if os.path.realpath(item) == root or os.path.realpath(item).startswith(root + os.sep) else root
+                        for item in allowed_dirs for root in roots
+                        if os.path.realpath(item) == root or os.path.realpath(item).startswith(root + os.sep)
+                        or root.startswith(os.path.realpath(item) + os.sep)]
     for allowed_dir in allowed_dirs:
         canonical_allowed = os.path.realpath(allowed_dir)
         # Check exact directory match or sub-path boundary

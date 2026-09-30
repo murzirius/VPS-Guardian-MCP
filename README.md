@@ -34,14 +34,14 @@ The English-language panel runs **on your computer, not on the VPS or this proje
 With [uv](https://docs.astral.sh/uv/) installed on your computer:
 
 ```bash
-uvx --from vps-guardian-mcp==0.32.1 vps-guardian-panel
+uvx --from vps-guardian-mcp==0.33.0 vps-guardian-panel
 ```
 
 Without uv, install in a local virtual environment. Windows PowerShell:
 
 ```powershell
 py -m venv .guardian-panel
-.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.32.1
+.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.33.0
 .\.guardian-panel\Scripts\python.exe -m src.local_panel
 ```
 
@@ -49,7 +49,7 @@ Linux/macOS:
 
 ```bash
 python3 -m venv .guardian-panel
-.guardian-panel/bin/pip install vps-guardian-mcp==0.32.1
+.guardian-panel/bin/pip install vps-guardian-mcp==0.33.0
 .guardian-panel/bin/vps-guardian-panel
 ```
 
@@ -58,7 +58,7 @@ The browser opens automatically. Enter the VPS address, SSH user, port and **pat
 To upgrade an existing pip installation on the VPS:
 
 ```bash
-/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.32.1
+/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.33.0
 ```
 
 Upgrade any other Guardian environments used by your agents, then reconnect **all agents once** so they start the policy-aware server. Subsequent permission changes affect new calls in those sessions without a restart. In-flight operations are not cancelled, and cached client tool lists may still show disabled tools; calls to those tools are rejected.
@@ -71,6 +71,23 @@ Use **Apply permissions** to save a shared per-SSH-user policy on the VPS at `~/
 - **Project roots:** inherit each process's `VPS_GUARDIAN_PROJECT_ROOTS`, or replace it with up to 16 absolute VPS directory paths, one per line. An empty custom list blocks project workspaces. Filesystem roots and symlink roots are rejected. This controls project tools, not the separate fixed configuration-file directory whitelist.
 
 The operator helper is **not registered as an ordinary agent tool**. Tools and the three read resources enforce access restrictions on the server. Policies apply to upgraded Guardian processes under the **same SSH user**, not to individually authenticated agent identities. An agent with independent root SSH access, the same account's shell, or permission to change Guardian's code can bypass this MCP boundary. For stronger separation use a restricted dedicated OS account; do not treat the panel as a sandbox or independent approval service.
+
+#### Agent Gateway (opt-in, Linux)
+
+The **Gateway** section creates a distinct, password-locked Unix account and accepts only that agent's **Ed25519 public key**. The root-owned `authorized_keys` file forces `vps-guardian-gateway serve <agent-id>` and disables SSH forwarding and PTY access for that key. Guardian checks a root-owned policy under `/etc/vps-guardian/gateway/` on every tool call, including expiration and revocation. The panel runs locally as before; Gateway adds **no web listener or always-on daemon** on the VPS.
+
+Use **Guardian 0.33.0+ on both devices**, with a separate **administrator SSH account** capable of running the operator helper as root. The VPS package and its Python interpreter must be root-owned, protected against group/other writes and readable/executable by the new accounts. A venv under `/root` will not work: use a protected installation such as `/opt/vps-guardian-mcp/.venv`. Open **Gateway**, enter a short agent name, paste its `.pub` key, choose existing project directories, a duration (1–168 hours) and one of two presets:
+
+- **Observer:** read-only diagnostics and project reading.
+- **Project editor:** project search, staged patch/check/apply tools in `controlled` mode. The agent can modify only files the dedicated Unix account can modify. Controlled-mode tokens are generated in that same agent session; **they are not independent human approval**.
+
+After creation, configure that agent's MCP client with the returned `vg_<name>` SSH username and its **own private key**, using the normal npm launcher. The client-supplied remote command and `--mode` cannot override the SSH forced command or the root-owned cap. Keep your administrator key out of the agent's environment. Project roots and tool allowlists narrow the MCP surface, but Linux file permissions are the hard boundary: grant the dedicated account only the required file permissions, never sudo, broad privileged groups or access to the Docker socket. Check that the selected directories are actually readable/writable by the account; Gateway does not change project ownership or ACLs.
+
+For example, an enrolled `deploy-bot` uses `--user vg_deploy_bot --key <AGENT_PRIVATE_KEY>` alongside the normal `--host` option. Only the preset's 6 or 14 tools are advertised at connection time; their permissions are rechecked live. At most 32 accounts can be enrolled, including expired/revoked records; this initial release has no automatic deletion or reactivation. Gateway accounts have **separate** Access/Limits/history/state from the administrator account. The root user's Access pause/roots/limits do not automatically apply to them; use Gateway revocation for a Gateway agent. Private account-local audit files are not a tamper-proof central audit log.
+
+**SSH compatibility:** the server must permit public-key login for locked accounts (normally `UsePAM yes` on Debian/Ubuntu) and use the account's `.ssh/authorized_keys`. Custom `AllowUsers`, `DenyUsers`, `AuthorizedKeysCommand`, trusted SSH CAs or `ForceCommand` settings can block or override this setup; an administrator must review them. Do not add alternative unrestricted keys/certificates for these accounts. Gateway does not rewrite or restart sshd.
+
+**Revoke** immediately blocks new normal MCP calls and removes that account's key for new SSH logins. It does not cancel an already-running operation or delete the Unix account and its private work/history; inspect those separately if needed. Expiration similarly denies later tool calls and future Gateway starts. `get_safety_status` remains available for recovery metadata. If an agent also possesses another independent SSH credential, Gateway cannot constrain that credential. This initial Gateway does **not** include independent human approvals, a public HTTP endpoint or general shell access.
 
 #### Projects and live Limits
 
@@ -115,7 +132,7 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.32.1
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.33.0
 ```
 
 For development from source instead:
@@ -159,7 +176,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.32.1",
+        "@murzirius/vps-guardian-mcp@0.33.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -188,7 +205,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.32.1
+@murzirius/vps-guardian-mcp@0.33.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -208,7 +225,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.32.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.33.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.

@@ -154,6 +154,8 @@ class TestAccessPolicy(unittest.TestCase):
         names = {tool.name for tool in tools}
         self.assertNotIn("save_access_policy", names)
         self.assertNotIn("get_access_policy", names)
+        self.assertNotIn("create_agent", names)
+        self.assertNotIn("revoke_agent", names)
 
     def test_resources_do_not_bypass_tool_restrictions(self):
         from src import server

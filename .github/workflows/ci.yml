@@ -9,6 +9,22 @@ permissions:
   contents: read
 
 jobs:
+  gateway-ssh:
+    name: Gateway real SSH isolation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install isolated root-owned Gateway
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y openssh-server python3-venv
+          sudo mkdir -p /opt/guardian-gateway-ci
+          sudo /usr/bin/python3 -m venv /opt/guardian-gateway-ci/venv
+          sudo /opt/guardian-gateway-ci/venv/bin/pip install .
+      - name: Verify forced command, account identity, project scope and live revocation
+        run: sudo env GITHUB_ACTIONS=true VPS_GUARDIAN_GATEWAY_INTEGRATION=1 /opt/guardian-gateway-ci/venv/bin/python "$GITHUB_WORKSPACE/tests/test_gateway_integration.py"
+
   test:
     runs-on: ubuntu-latest
     strategy:

@@ -487,9 +487,18 @@ def _access_denial(name):
     return access_denial(name)
 
 
+try:
+    from src.gateway import catalog_tools as _gateway_catalog_tools
+except ImportError:
+    from gateway import catalog_tools as _gateway_catalog_tools
+_GATEWAY_TOOLS = _gateway_catalog_tools()
+
+
 def guardian_tool():
     """Register the full catalog or a smaller agent workspace catalog at startup."""
     def decorate(function):
+        if _GATEWAY_TOOLS is not None and function.__name__ not in _GATEWAY_TOOLS:
+            return function
         if _TOOL_PROFILE == "core" and function.__name__ not in _CORE_TOOLS:
             return function
         @functools.wraps(function)

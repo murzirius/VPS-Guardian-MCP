@@ -93,6 +93,13 @@ def load_policy() -> dict[str, Any]:
 
 
 def access_denial(name: str) -> dict[str, Any] | None:
+    try:
+        from src.gateway import access_denial as gateway_denial
+    except ImportError:
+        from gateway import access_denial as gateway_denial
+    gateway_result = gateway_denial(name)
+    if gateway_result is not None:
+        return gateway_result
     if name == "get_safety_status":
         return None  # Recovery/diagnostic metadata cannot be disabled.
     state = load_policy()
@@ -105,11 +112,29 @@ def access_denial(name: str) -> dict[str, Any] | None:
 
 def mode_cap() -> str:
     policy = load_policy()["policy"]
-    return policy["mode_cap"] if policy["enabled"] else "read-only"
+    cap = policy["mode_cap"] if policy["enabled"] else "read-only"
+    try:
+        from src.gateway import mode_cap as gateway_mode_cap
+    except ImportError:
+        from gateway import mode_cap as gateway_mode_cap
+    agent_cap = gateway_mode_cap()
+    return min((cap, agent_cap), key=MODES.get) if agent_cap else cap
 
 
 def managed_project_roots() -> list[str] | None:
-    return load_policy()["policy"]["project_roots"]
+    shared = load_policy()["policy"]["project_roots"]
+    try:
+        from src.gateway import project_roots as gateway_project_roots
+    except ImportError:
+        from gateway import project_roots as gateway_project_roots
+    agent = gateway_project_roots()
+    if agent is None:
+        return shared
+    if shared is None:
+        return agent
+    # Both policies are caps. Keep only their intersecting directory subtrees.
+    return sorted({a if a == s or a.startswith(s + os.sep) else s
+                   for a in agent for s in shared if a == s or a.startswith(s + os.sep) or s.startswith(a + os.sep)})
 
 
 def control_path(path: str) -> bool:
@@ -150,6 +175,7 @@ def get_access_policy() -> dict[str, Any]:
     from src.resource_policy import get_workspace_settings
     return {"status": "ok", **load_policy(), "catalog": list(tool_catalog()), "version": __version__,
             "workspace_settings_supported": True, "workspace": get_workspace_settings(), "operations_supported": True,
+            "gateway_supported": os.name == "posix" and os.geteuid() == 0,
             "scope": "All upgraded Guardian MCP processes running as this SSH user.",
             "human_approval_enforced": False, "os_isolation": False}
 
@@ -188,6 +214,10 @@ def main():
     from src.operation_store import list_operations, get_operation
     server.tool()(list_operations)
     server.tool()(get_operation)
+    from src.gateway import create_agent, list_agents, revoke_agent
+    server.tool()(create_agent)
+    server.tool()(list_agents)
+    server.tool()(revoke_agent)
     server.run()
 
 

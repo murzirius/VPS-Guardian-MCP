@@ -10,6 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.33.0] - 2026-09-30
+
+### Added
+- Opt-in Agent Gateway foundation: root-owned per-agent access policy, dedicated password-locked Unix account, forced-command Ed25519 SSH key, per-call tool/expiry/revocation enforcement, separate project roots and audit attribution. No background service or public port.
+- English Gateway tab in the local panel to enroll Observer or Project editor accounts, list their effective scope and revoke keys. The Project editor preset remains subject to Linux file permissions and existing controlled-mode tokens; independent human approval is not yet implemented.
+- Compact per-agent tool catalogs, private per-account runtime state, protected installation preflight, serialized administration and a real SSH integration check on a disposable Linux CI runner.
+
+### Boundaries
+- Gateway requires Linux and an administrator operator connection. It never grants project ACLs, sudo or Docker access. Revocation does not interrupt in-flight work, and independent SSH credentials remain outside the Gateway boundary.
+
+---
+
 ## [0.32.1] - 2026-09-27
 
 ### Fixed
