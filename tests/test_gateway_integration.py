@@ -42,9 +42,18 @@ class TestGatewaySSH(unittest.TestCase):
             host_key = temporary / "host-key"
             for path in (key, host_key):
                 subprocess.run(["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(path)], check=True, timeout=10)
+            diagnostics = []
+            def trace(frame, event, arg):
+                if event == "exception" and frame.f_code.co_filename == gateway.__file__:
+                    diagnostics.append((frame.f_lineno, arg[0].__name__, str(arg[1])))
+                return trace
             with patch("src.gateway.sys.argv", [str(base / "venv" / "bin" / "vps-guardian-access")]):
-                result = gateway.create_agent(agent_id, key.with_suffix(".pub").read_text(), [str(project)])
-            self.assertEqual(result["status"], "ok", result)
+                sys.settrace(trace)
+                try:
+                    result = gateway.create_agent(agent_id, key.with_suffix(".pub").read_text(), [str(project)])
+                finally:
+                    sys.settrace(None)
+            self.assertEqual(result["status"], "ok", {"result": result, "diagnostics": diagnostics[-5:]})
             enrolled = True
             try:
                 with socket.socket() as sock:
