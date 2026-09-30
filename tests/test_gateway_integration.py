@@ -25,6 +25,11 @@ from src import gateway
                      "Only enabled on a disposable GitHub-hosted Linux CI runner")
 class TestGatewaySSH(unittest.TestCase):
     def test_real_ssh_identity_scope_forced_command_and_live_revocation(self):
+        for profile in ("observer", "project-editor"):
+            with self.subTest(profile=profile):
+                self._exercise_profile(profile)
+
+    def _exercise_profile(self, profile):
         self.assertEqual(os.geteuid(), 0)
         base = Path("/opt/guardian-gateway-ci")
         self.assertTrue(base.is_dir())
@@ -50,12 +55,15 @@ class TestGatewaySSH(unittest.TestCase):
             with patch("src.gateway.sys.argv", [str(base / "venv" / "bin" / "vps-guardian-access")]):
                 sys.settrace(trace)
                 try:
-                    result = gateway.create_agent(agent_id, key.with_suffix(".pub").read_text(), [str(project)])
+                    result = gateway.create_agent(agent_id, key.with_suffix(".pub").read_text(), [str(project)], profile=profile)
                 finally:
                     sys.settrace(None)
             self.assertEqual(result["status"], "ok", {"result": result, "diagnostics": diagnostics[-5:]})
             enrolled = True
             try:
+                user = gateway.pwd.getpwnam(account)
+                os.chown(project, user.pw_uid, user.pw_gid)
+                os.chown(project / "main.py", user.pw_uid, user.pw_gid)
                 with socket.socket() as sock:
                     sock.bind(("127.0.0.1", 0))
                     port = sock.getsockname()[1]
@@ -101,7 +109,8 @@ LogLevel VERBOSE
                         async with stdio_client(params) as (reader, writer), ClientSession(reader, writer) as session:
                             await session.initialize()
                             tools = await session.list_tools()
-                            self.assertEqual({tool.name for tool in tools.tools}, set(gateway.DEFAULT_TOOLS))
+                            expected = gateway.DEFAULT_TOOLS if profile == "observer" else gateway.EDITOR_TOOLS
+                            self.assertEqual({tool.name for tool in tools.tools}, set(expected))
                             self.assertFalse(marker.exists())  # Client command is ignored by forced SSH command.
 
                             def data(response):
@@ -113,6 +122,24 @@ LogLevel VERBOSE
                             self.assertEqual(outside["status"], "forbidden", outside)
                             write = await session.call_tool("restart_service", {"service_name": "sshd"})
                             self.assertTrue(write.isError)
+                            if profile == "observer":
+                                blocked = await session.call_tool("begin_project_patch", {"project_path": str(project), "title": "Must not write"})
+                                self.assertTrue(blocked.isError)
+                            else:
+                                begun = data(await session.call_tool("begin_project_patch", {"project_path": str(project), "title": "Gateway CI syntax update"}))
+                                self.assertEqual(begun["status"], "ok", begun)
+                                patch_id = begun["patch"]["patch_id"]
+                                staged = data(await session.call_tool("stage_project_file_change", {"patch_id": patch_id, "relative_path": "main.py", "content": "print('updated')\n"}))
+                                self.assertEqual(staged["status"], "ok", staged)
+                                preview = data(await session.call_tool("preview_project_patch", {"patch_id": patch_id}))
+                                self.assertEqual(preview["status"], "confirmation_required", preview)
+                                self.assertEqual((project / "main.py").read_text(), "print('gateway-ci')\n")
+                                applied = data(await session.call_tool("apply_project_patch", {"patch_id": patch_id, "confirmation_token": preview["confirmation_token"]}))
+                                self.assertEqual(applied["status"], "ok", applied)
+                                self.assertTrue(applied["success"], applied)
+                                self.assertEqual((project / "main.py").read_text(), "print('updated')\n")
+                                checked = data(await session.call_tool("run_project_checks", {"project_path": str(project), "check": "python_compile"}))
+                                self.assertEqual(checked["status"], "ok", checked)
                             self.assertEqual(gateway.revoke_agent(agent_id)["status"], "ok")
                             revoked = data(await session.call_tool("get_system_health", {}))
                             self.assertEqual(revoked["status"], "forbidden", revoked)
