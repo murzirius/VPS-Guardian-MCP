@@ -148,6 +148,12 @@ LogLevel VERBOSE
                             self.assertEqual(revoked["status"], "forbidden", revoked)
                         denied = subprocess.run(["/usr/bin/ssh", *args, "true"], capture_output=True, timeout=10)
                         self.assertNotEqual(denied.returncode, 0)
+                        for _ in range(100):
+                            processes = subprocess.run(["/usr/bin/ps", "-u", str(user.pw_uid), "-o", "args="], capture_output=True, text=True, timeout=3)
+                            if "vps-guardian-gateway" not in processes.stdout:
+                                break
+                            await asyncio.sleep(0.05)
+                        self.assertNotIn("vps-guardian-gateway", processes.stdout, "Gateway process survived SSH disconnect")
                     asyncio.run(asyncio.wait_for(check(), timeout=45))
             finally:
                 if daemon is not None:
@@ -155,7 +161,16 @@ LogLevel VERBOSE
                     daemon.wait(timeout=10)
                 if enrolled:
                     gateway.revoke_agent(agent_id)
-                    subprocess.run(["/usr/sbin/userdel", account], check=True, timeout=10, capture_output=True)
+                    # PAM may leave a systemd user manager after SSH logout.
+                    # Terminate ONLY this disposable test UID, never root or a
+                    # production account, before removing its CI account.
+                    subprocess.run(["/usr/bin/pkill", "-KILL", "-u", str(user.pw_uid)], timeout=5, capture_output=True)
+                    for _ in range(50):
+                        removed = subprocess.run(["/usr/sbin/userdel", account], timeout=10, capture_output=True)
+                        if removed.returncode != 8:
+                            break
+                        time.sleep(0.05)
+                    removed.check_returncode()
                     gateway._policy_path(agent_id).unlink(missing_ok=True)
                     # Exact random test identity only, never the account base.
                     test_home = gateway.HOME_BASE / agent_id
