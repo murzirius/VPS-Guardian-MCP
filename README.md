@@ -87,6 +87,8 @@ For example, an enrolled `deploy-bot` uses `--user vg_deploy_bot --key <AGENT_PR
 
 **SSH compatibility:** the server must permit public-key login for locked accounts (normally `UsePAM yes` on Debian/Ubuntu) and use the account's `.ssh/authorized_keys`. Custom `AllowUsers`, `DenyUsers`, `AuthorizedKeysCommand`, trusted SSH CAs or `ForceCommand` settings can block or override this setup; an administrator must review them. Do not add alternative unrestricted keys/certificates for these accounts. Gateway does not rewrite or restart sshd.
 
+Atomic project writes preserve the original file's owner/group. Directory write permission alone may not suffice for another owner's existing file: the kernel can reject ownership preservation. Use appropriately owned files/a separate worktree for an editor account; Guardian does not silently drop file ownership to force a write. Gateway is a restricted MCP entry point, **not a container or a filesystem sandbox**.
+
 **Revoke** immediately blocks new normal MCP calls and removes that account's key for new SSH logins. It does not cancel an already-running operation or delete the Unix account and its private work/history; inspect those separately if needed. Expiration similarly denies later tool calls and future Gateway starts. `get_safety_status` remains available for recovery metadata. If an agent also possesses another independent SSH credential, Gateway cannot constrain that credential. This initial Gateway does **not** include independent human approvals, a public HTTP endpoint or general shell access.
 
 #### Projects and live Limits

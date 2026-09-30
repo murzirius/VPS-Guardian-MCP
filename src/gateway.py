@@ -251,7 +251,11 @@ def _check_installation(executable: Path) -> None:
             raise PermissionError("Gateway installation must be root-owned, readable and protected.")
 
     check_file(executable, True)
-    check_file(Path(__file__))
+    for module in Path(__file__).parent.glob("*.py"):
+        check_file(module)
+    configuration = executable.parent.parent / "pyvenv.cfg"
+    if configuration.exists():
+        check_file(configuration)
     # Console entry points must use an absolute, protected Python interpreter;
     # an env/PATH shebang would choose an uncontrolled interpreter after SSH.
     with executable.open("rb") as stream:
