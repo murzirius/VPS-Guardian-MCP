@@ -457,6 +457,8 @@ _TOOL_PROFILE = os.environ.get("VPS_GUARDIAN_TOOL_PROFILE", "full").strip().lowe
 if _TOOL_PROFILE not in {"core", "full"}:
     raise ValueError("VPS_GUARDIAN_TOOL_PROFILE must be core or full.")
 _CORE_TOOLS = {
+    "create_mission_workspace", "read_mission_workspace", "stage_mission_file", "stage_mission_line_edit",
+    "submit_mission_workspace", "list_mission_workspaces",
     "list_operations", "get_operation",
     "get_system_health", "get_top_processes", "check_service_status", "read_service_logs",
     "get_vps_topology", "find_workload", "get_workload_health", "diagnose_workload",
@@ -2312,6 +2314,49 @@ def troubleshoot_application_crash_prompt() -> str:
         "6. Call `test_network_connectivity` if outbound API or database connections failed.\n"
         "7. Compile root cause diagnosis and formulate recovery recommendations."
     )
+
+
+@guardian_tool()
+def create_mission_workspace(project_path: str, relative_paths: list[str], title: str) -> str:
+    """Copy up to three protected text files into a Mission worker's private proposal; never write production."""
+    from src.mission_control import create_mission_workspace as operation
+    return json.dumps(operation(project_path, relative_paths, title))
+
+
+@guardian_tool()
+def read_mission_workspace(workspace_id: str, relative_path: str, byte_offset: int = 0, max_bytes: int = 12000) -> str:
+    """Read a bounded candidate fragment and hashes; resume via next_byte_offset."""
+    from src.mission_control import read_mission_workspace as operation
+    return json.dumps(operation(workspace_id, relative_path, byte_offset, max_bytes))
+
+
+@guardian_tool()
+def stage_mission_file(workspace_id: str, relative_path: str, content: str, expected_sha256: str) -> str:
+    """Replace a private candidate using its current SHA-256; production remains unchanged."""
+    from src.mission_control import stage_mission_file as operation
+    return json.dumps(operation(workspace_id, relative_path, content, expected_sha256))
+
+
+@guardian_tool()
+def stage_mission_line_edit(workspace_id: str, relative_path: str, start_line: int, end_line: int,
+                            replacement: str, expected_sha256: str) -> str:
+    """Edit inclusive lines in a private candidate without resending the complete file."""
+    from src.mission_control import stage_mission_line_edit as operation
+    return json.dumps(operation(workspace_id, relative_path, start_line, end_line, replacement, expected_sha256))
+
+
+@guardian_tool()
+def submit_mission_workspace(workspace_id: str) -> str:
+    """Freeze a proposal for independent operator review; this does not grant permission to apply."""
+    from src.mission_control import submit_mission_workspace as operation
+    return json.dumps(operation(workspace_id))
+
+
+@guardian_tool()
+def list_mission_workspaces() -> str:
+    """Recover private workspace IDs and candidate hashes after reconnecting, without source output."""
+    from src.mission_control import list_mission_workspaces as operation
+    return json.dumps(operation())
 
 
 def main() -> None:

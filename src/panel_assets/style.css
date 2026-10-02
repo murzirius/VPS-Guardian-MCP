@@ -9,3 +9,4 @@
 .operation-row strong, .operation-row small { display: block; overflow-wrap: anywhere; }
 .operation-row small { margin-top: 5px; }
 .operation-row .small-tag { flex-shrink: 0; }
+.mission-diff { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 ui-monospace, monospace; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }

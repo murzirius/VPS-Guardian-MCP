@@ -176,6 +176,7 @@ def get_access_policy() -> dict[str, Any]:
     return {"status": "ok", **load_policy(), "catalog": list(tool_catalog()), "version": __version__,
             "workspace_settings_supported": True, "workspace": get_workspace_settings(), "operations_supported": True,
             "gateway_supported": os.name == "posix" and os.geteuid() == 0,
+            "mission_control_supported": os.name == "posix" and os.geteuid() == 0,
             "scope": "All upgraded Guardian MCP processes running as this SSH user.",
             "human_approval_enforced": False, "os_isolation": False}
 
@@ -218,6 +219,9 @@ def main():
     server.tool()(create_agent)
     server.tool()(list_agents)
     server.tool()(revoke_agent)
+    from src import mission_control
+    for name in sorted(mission_control.OPERATOR_TOOLS):
+        server.tool()(getattr(mission_control, name))
     server.run()
 
 

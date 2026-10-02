@@ -26,10 +26,12 @@ import webbrowser
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from src.mission_control import OPERATOR_TOOLS as MISSION_OPERATOR_TOOLS
 
 DEFAULT_REMOTE = "/opt/vps-guardian-mcp/.venv/bin/vps-guardian-mcp"
 ALLOWED_TOOLS = frozenset({"get_safety_status", "get_system_health", "get_failed_systemd_units"})
 ADMIN_TOOLS = frozenset({"get_access_policy", "save_access_policy", "get_workspace_settings", "save_workspace_settings", "list_operator_projects", "inspect_operator_project", "list_operations", "get_operation", "list_agents", "create_agent", "revoke_agent"})
+ADMIN_TOOLS = ADMIN_TOOLS | MISSION_OPERATOR_TOOLS
 POLL_SECONDS = 30
 REQUEST_TIMEOUT = 20
 MAX_BODY = 8192
@@ -219,7 +221,9 @@ class PanelController:
                                      "workspace": None, "workspace_supported": False, "workspace_error": None,
                                      "projects": None, "project": None, "projects_error": None,
                                      "operations": None, "operation": None, "operations_error": None, "operations_supported": False,
-                                     "gateway_agents": None, "gateway_error": None, "gateway_supported": False}
+                                     "gateway_agents": None, "gateway_error": None, "gateway_supported": False,
+                                     "mission_supported": False, "mission_submissions": None, "mission_reviews": None,
+                                     "mission_review": None, "mission_error": None}
 
     def status(self):
         with self.lock:
@@ -241,6 +245,7 @@ class PanelController:
                               workspace=None, workspace_supported=False, workspace_error=None, projects=None, project=None, projects_error=None,
                               operations=None, operation=None, operations_error=None, operations_supported=False,
                               gateway_agents=None, gateway_error=None, gateway_supported=False,
+                              mission_supported=False, mission_submissions=None, mission_reviews=None, mission_review=None, mission_error=None,
                               target={"host": config["host"], "user": config["user"], "port": config["port"]})
             self.thread = threading.Thread(target=self._worker, args=(params, admin_params), daemon=True)
             self.thread.start()
@@ -253,7 +258,8 @@ class PanelController:
                               snapshot=None, updated_at=None, error=None, access=None, policy_busy=False,
                               workspace=None, workspace_supported=False, projects=None, project=None,
                               operations=None, operation=None, operations_supported=False, operations_error=None,
-                              gateway_agents=None, gateway_supported=False, gateway_error=None)
+                              gateway_agents=None, gateway_supported=False, gateway_error=None,
+                              mission_supported=False, mission_submissions=None, mission_reviews=None, mission_review=None, mission_error=None)
 
     def policy_request(self, data=None):
         if data is not None:
@@ -331,7 +337,7 @@ class PanelController:
                     or not isinstance(data["public_key"], str) or len(data["public_key"]) > 1024
                     or not isinstance(data["project_roots"], list) or len(data["project_roots"]) > 8
                     or any(not isinstance(root, str) or len(root) > 1024 for root in data["project_roots"])
-                    or not isinstance(data["profile"], str) or data["profile"] not in {"observer", "project-editor"}
+                    or not isinstance(data["profile"], str) or data["profile"] not in {"observer", "project-editor", "mission-worker"}
                     or type(data["expires_hours"]) is not int or not 1 <= data["expires_hours"] <= 168):
                 raise PanelInputError("Invalid agent name, public key, project roots or expiry.")
         elif name == "revoke_agent":
@@ -347,6 +353,28 @@ class PanelController:
                 raise RuntimeError("An operator request is already running.")
             self.policy_job = (name, copy.deepcopy(data))
             self.state.update(policy_busy=True, gateway_error=None)
+
+    def mission_request(self, name, data):
+        from src.mission_control import WORKSPACE_ID, REVIEW_ID, DIGEST
+        from src.gateway import AGENT_ID
+        fields = {"list_mission_reviews": {}, "list_mission_submissions": {"agent_id": AGENT_ID},
+                  "import_mission_review": {"agent_id": AGENT_ID, "workspace_id": WORKSPACE_ID},
+                  "get_mission_review": {"review_id": REVIEW_ID},
+                  "decide_mission_review": {"review_id": REVIEW_ID, "digest": DIGEST, "decision": None},
+                  "apply_mission_review": {"review_id": REVIEW_ID, "digest": DIGEST}}
+        if name not in fields or not isinstance(data, dict) or set(data) != set(fields[name]):
+            raise PanelInputError("Invalid Mission Control request.")
+        for key, pattern in fields[name].items():
+            value = data[key]
+            if not isinstance(value, str) or (pattern is not None and not pattern.fullmatch(value)) or (key == "decision" and value not in {"approve", "reject"}):
+                raise PanelInputError("Invalid review identity, digest or decision.")
+        with self.lock:
+            if self.state["connection"] != "connected" or not self.state["mission_supported"]:
+                raise RuntimeError("Connect as administrator to Guardian 0.34.0+ before using Mission Control.")
+            if self.state["policy_busy"]:
+                raise RuntimeError("An operator request is already running.")
+            self.policy_job = (name, copy.deepcopy(data))
+            self.state.update(policy_busy=True, mission_error=None)
 
     def close(self):
         self.disconnect()
@@ -376,7 +404,11 @@ class PanelController:
                             return await read_tool(session, name, arguments, admin=True)
                 result = await asyncio.wait_for(exchange(), REQUEST_TIMEOUT)
                 field = "gateway_agents" if name in {"list_agents", "create_agent", "revoke_agent"} else "operations" if name == "list_operations" else "operation" if name == "get_operation" else "access" if name in {"get_access_policy", "save_access_policy"} else "projects" if name == "list_operator_projects" else "project" if name == "inspect_operator_project" else "workspace"
+                if name in MISSION_OPERATOR_TOOLS:
+                    field = "mission_reviews" if name == "list_mission_reviews" else "mission_submissions" if name == "list_mission_submissions" else "mission_review"
                 error_field = "gateway_error" if field == "gateway_agents" else "operations_error" if field in {"operations", "operation"} else "access_error" if field == "access" else "projects_error" if field in {"projects", "project"} else "workspace_error"
+                if name in MISSION_OPERATOR_TOOLS:
+                    error_field = "mission_error"
                 if result.get("status") == "ok":
                     if field == "access":
                         from src.access_policy import validate_policy
@@ -398,6 +430,12 @@ class PanelController:
                         raise ValueError("Invalid gateway reply")
                     elif field == "project" and not isinstance(result.get("files"), list):
                         raise ValueError("Invalid project reply")
+                    elif field == "mission_reviews" and not isinstance(result.get("reviews"), list):
+                        raise ValueError("Invalid reviews reply")
+                    elif field == "mission_submissions" and not isinstance(result.get("submissions"), list):
+                        raise ValueError("Invalid submissions reply")
+                    elif field == "mission_review" and (not isinstance(result.get("review"), dict) or not isinstance(result.get("diff"), str)):
+                        raise ValueError("Invalid review reply")
                     with self.lock:
                         if not self.stop.is_set():
                             self.state[field] = None if field == "gateway_agents" and name != "list_agents" else result
@@ -406,6 +444,7 @@ class PanelController:
                                 supported = result.get("workspace_settings_supported") is True and isinstance(result.get("workspace"), dict)
                                 self.state["operations_supported"] = result.get("operations_supported") is True
                                 self.state["gateway_supported"] = result.get("gateway_supported") is True
+                                self.state["mission_supported"] = result.get("mission_control_supported") is True
                                 self.state["workspace_supported"] = supported
                                 self.state["workspace"] = result.get("workspace") if supported else None
                                 # Scope may have changed. Discard stale project metadata.
@@ -413,7 +452,9 @@ class PanelController:
                 else:
                     with self.lock:
                         self.state[error_field] = ("Settings changed elsewhere. Reload before applying your changes."
-                                                  if result.get("status") == "conflict" else result.get("error", "Gateway request failed.") if field == "gateway_agents" else "Operator request failed. Check project roots, supported values and directory permissions.")
+                                                  if result.get("status") == "conflict" else result.get("error", "Operator request failed.") if field == "gateway_agents" or name in MISSION_OPERATOR_TOOLS else "Operator request failed. Check project roots, supported values and directory permissions.")
+                        if name in MISSION_OPERATOR_TOOLS:
+                            self.state["mission_review"] = None  # Do not leave stale Apply/Approve controls enabled.
                         if field == "operation":
                             self.state["operation"] = None
                         if field == "project":
@@ -421,6 +462,9 @@ class PanelController:
             except Exception as exc:
                 with self.lock:
                     error_field = "gateway_error" if name in {"list_agents", "create_agent", "revoke_agent"} else "operations_error" if name in {"list_operations", "get_operation"} else "access_error" if name in {"get_access_policy", "save_access_policy"} else "projects_error" if "project" in name else "workspace_error"
+                    if name in MISSION_OPERATOR_TOOLS:
+                        error_field = "mission_error"
+                        self.state["mission_review"] = None
                     self.state[error_field] = "Operator helper unavailable. Install the current Guardian release in the same environment as the MCP executable. " + connection_error(tail(), exc)["message"]
             finally:
                 with self.lock:
@@ -617,6 +661,11 @@ class PanelHandler(BaseHTTPRequestHandler):
             elif path in {"/api/gateway/list", "/api/gateway/create", "/api/gateway/revoke"}:
                 names = {"/api/gateway/list": "list_agents", "/api/gateway/create": "create_agent", "/api/gateway/revoke": "revoke_agent"}
                 self.server.controller.gateway_request(names[path], data)
+            elif path in {"/api/missions/submissions", "/api/missions/import", "/api/missions/list", "/api/missions/inspect", "/api/missions/decide", "/api/missions/apply"}:
+                names = {"/api/missions/submissions": "list_mission_submissions", "/api/missions/import": "import_mission_review",
+                         "/api/missions/list": "list_mission_reviews", "/api/missions/inspect": "get_mission_review",
+                         "/api/missions/decide": "decide_mission_review", "/api/missions/apply": "apply_mission_review"}
+                self.server.controller.mission_request(names[path], data)
             elif path in ("/api/disconnect", "/api/refresh") and data == {}:
                 getattr(self.server.controller, "disconnect" if path.endswith("disconnect") else "refresh")()
             else:

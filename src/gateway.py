@@ -38,6 +38,8 @@ DEFAULT_TOOLS = ["get_safety_status", "get_system_health", "get_vps_topology", "
 EDITOR_TOOLS = DEFAULT_TOOLS + ["search_project_code", "begin_project_patch", "stage_project_file_change",
                                 "preview_project_patch", "run_project_checks", "apply_project_patch",
                                 "list_operations", "get_operation"]
+MISSION_TOOLS = DEFAULT_TOOLS + ["search_project_code", "create_mission_workspace", "read_mission_workspace",
+                                 "stage_mission_file", "stage_mission_line_edit", "submit_mission_workspace", "list_mission_workspaces"]
 
 
 def _account(agent_id: str) -> str:
@@ -108,7 +110,7 @@ def _read_policy(agent_id: str) -> dict[str, Any]:
             or value["mode_cap"] not in {"read-only", "controlled"}):
         raise ValueError("Gateway policy is invalid.")
     if (type(value.get("uid")) is not int or value["uid"] <= 0
-            or not isinstance(value.get("profile"), str) or value["profile"] not in {"observer", "project-editor"}
+            or not isinstance(value.get("profile"), str) or value["profile"] not in {"observer", "project-editor", "mission-worker"}
             or not isinstance(value.get("expires_at"), str)
             or not isinstance(value.get("key_fingerprint"), str)
             or not re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", value["key_fingerprint"])):
@@ -119,6 +121,8 @@ def _read_policy(agent_id: str) -> dict[str, Any]:
             or not all(isinstance(t, str) and len(t) <= 100 for t in value["allowed_tools"])):
         raise ValueError("Gateway policy is invalid.")
     roots = value.get("project_roots")
+    if value["profile"] == "mission-worker" and (value["mode_cap"] != "read-only" or not set(value["allowed_tools"]).issubset(MISSION_TOOLS)):
+        raise ValueError("Mission worker cannot have direct mutation or operator tools.")
     if (not isinstance(roots, list) or len(roots) > 8
             or not all(isinstance(root, str) and len(root) <= 1024 and os.path.isabs(root)
                        and root != "/" and not any(ord(c) < 32 or ord(c) == 127 for c in root) for root in roots)):
@@ -277,9 +281,9 @@ def create_agent(agent_id: str, public_key: str, project_roots: list[str],
         roots = _validate_roots(project_roots)
         from src.access_policy import tool_catalog
         names = {entry["name"] for entry in tool_catalog()}
-        if not isinstance(profile, str) or profile not in {"observer", "project-editor"}:
-            raise ValueError("Choose an observer or project-editor profile.")
-        tools = DEFAULT_TOOLS if profile == "observer" else EDITOR_TOOLS
+        if not isinstance(profile, str) or profile not in {"observer", "project-editor", "mission-worker"}:
+            raise ValueError("Choose an observer, project-editor or mission-worker profile.")
+        tools = {"observer": DEFAULT_TOOLS, "project-editor": EDITOR_TOOLS, "mission-worker": MISSION_TOOLS}[profile]
         if any(t not in names for t in tools):
             raise ValueError("The installed Guardian tool catalog is incompatible with this profile.")
         if type(expires_hours) is not int or not 1 <= expires_hours <= 168:
@@ -334,7 +338,7 @@ def create_agent(agent_id: str, public_key: str, project_roots: list[str],
         os.chown(local, user.pw_uid, user.pw_gid)
         expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=expires_hours)
         policy = {"agent_id": agent_id, "account": account, "uid": user.pw_uid, "enabled": True,
-                  "profile": profile, "mode_cap": "read-only" if profile == "observer" else "controlled",
+                  "profile": profile, "mode_cap": "controlled" if profile == "project-editor" else "read-only",
                   "allowed_tools": sorted(set(tools) | {"get_safety_status"}),
                   "project_roots": roots, "expires_at": expires.isoformat(), "key_fingerprint": fingerprint}
         _write_policy(agent_id, policy)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import stat
 import secrets
+import hashlib
 from contextlib import contextmanager
 
 
@@ -87,7 +88,8 @@ def private_directory(path: str) -> str:
     return absolute
 
 
-def atomic_replace(path: str, data: bytes, backup: bool = False, limit: int = 2 * 1024 * 1024, private: bool = False):
+def atomic_replace(path: str, data: bytes, backup: bool = False, limit: int = 2 * 1024 * 1024, private: bool = False,
+                   expected_sha256: str | None = None):
     """Replace within a pinned directory; never follow target or backup symlinks.
 
     Preserve ordinary target permissions/ownership, not setuid/setgid bits.
@@ -146,6 +148,8 @@ def atomic_replace(path: str, data: bytes, backup: bool = False, limit: int = 2 
                     original = handle.read(limit + 1)
                     if len(original) > limit:
                         raise OSError("Target grew beyond its read budget.")
+            if expected_sha256 is not None and (original is None or hashlib.sha256(original).hexdigest() != expected_sha256):
+                raise OSError("Target baseline changed; replacement refused.")
             if before is not None and backup:
                 try:
                     existing_backup = inspect(name + ".bak")

@@ -17,7 +17,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from src import gateway
+from src import gateway, mission_control as missions
 
 
 @unittest.skipUnless(os.environ.get("VPS_GUARDIAN_GATEWAY_INTEGRATION") == "1"
@@ -25,7 +25,7 @@ from src import gateway
                      "Only enabled on a disposable GitHub-hosted Linux CI runner")
 class TestGatewaySSH(unittest.TestCase):
     def test_real_ssh_identity_scope_forced_command_and_live_revocation(self):
-        for profile in ("observer", "project-editor"):
+        for profile in ("observer", "project-editor", "mission-worker"):
             with self.subTest(profile=profile):
                 self._exercise_profile(profile)
 
@@ -65,8 +65,9 @@ class TestGatewaySSH(unittest.TestCase):
             enrolled = True
             try:
                 user = gateway.pwd.getpwnam(account)
-                os.chown(project, user.pw_uid, user.pw_gid)
-                os.chown(project / "main.py", user.pw_uid, user.pw_gid)
+                if profile != "mission-worker":
+                    os.chown(project, user.pw_uid, user.pw_gid)
+                    os.chown(project / "main.py", user.pw_uid, user.pw_gid)
                 with socket.socket() as sock:
                     sock.bind(("127.0.0.1", 0))
                     port = sock.getsockname()[1]
@@ -112,7 +113,8 @@ LogLevel VERBOSE
                         async with stdio_client(params) as (reader, writer), ClientSession(reader, writer) as session:
                             await session.initialize()
                             tools = await session.list_tools()
-                            expected = gateway.DEFAULT_TOOLS if profile == "observer" else gateway.EDITOR_TOOLS
+                            expected = {"observer": gateway.DEFAULT_TOOLS, "project-editor": gateway.EDITOR_TOOLS,
+                                        "mission-worker": gateway.MISSION_TOOLS}[profile]
                             self.assertEqual({tool.name for tool in tools.tools}, set(expected))
                             self.assertFalse(marker.exists())  # Client command is ignored by forced SSH command.
 
@@ -128,6 +130,35 @@ LogLevel VERBOSE
                             if profile == "observer":
                                 blocked = await session.call_tool("begin_project_patch", {"project_path": str(project), "title": "Must not write"})
                                 self.assertTrue(blocked.isError)
+                            elif profile == "mission-worker":
+                                for forbidden in ("apply_project_patch", "apply_mission_review", "decide_mission_review", "create_agent"):
+                                    self.assertTrue((await session.call_tool(forbidden, {})).isError)
+                                created = data(await session.call_tool("create_mission_workspace", {"project_path": str(project), "relative_paths": ["main.py"], "title": "Independent SSH review"}))
+                                self.assertEqual(created["status"], "ok", created)
+                                workspace = created["workspace"]
+                                staged = data(await session.call_tool("stage_mission_line_edit", {"workspace_id": workspace["workspace_id"], "relative_path": "main.py", "start_line": 1, "end_line": 1,
+                                                                                                  "replacement": "print('reviewed')\n", "expected_sha256": workspace["files"][0]["candidate_sha256"]}))
+                                self.assertEqual(staged["status"], "ok", staged)
+                                self.assertEqual(data(await session.call_tool("submit_mission_workspace", {"workspace_id": workspace["workspace_id"]}))["status"], "ok")
+                                self.assertEqual((project / "main.py").read_text(), "print('gateway-ci')\n")
+                                reviewed = missions.import_mission_review(agent_id, workspace["workspace_id"])
+                                self.assertEqual(reviewed["status"], "ok", reviewed)
+                                review = reviewed["review"]
+                                self.assertEqual(missions.apply_mission_review(review["review_id"], review["digest"])["status"], "error")
+                                # The agent's OS account cannot modify production
+                                # even if it somehow obtains another shell.
+                                direct = subprocess.run(["/usr/sbin/runuser", "-u", account, "--", "/bin/sh", "-c", 'printf bypass >> "$1"', "sh", str(project / "main.py")], capture_output=True, timeout=5)
+                                self.assertNotEqual(direct.returncode, 0)
+                                approved = missions.decide_mission_review(review["review_id"], review["digest"], "approve")
+                                self.assertEqual(approved["status"], "ok", approved)
+                                applied = missions.apply_mission_review(review["review_id"], review["digest"])
+                                self.assertEqual(applied["review"]["state"], "completed", applied)
+                                self.assertEqual((project / "main.py").read_text(), "print('reviewed')\n")
+                                # Root snapshots remain unreadable to the worker.
+                                snapshot = gateway.POLICY_BASE / "reviews" / (review["review_id"] + ".json")
+                                leak = subprocess.run(["/usr/sbin/runuser", "-u", account, "--", "/bin/cat", str(snapshot)], capture_output=True, timeout=5)
+                                self.assertNotEqual(leak.returncode, 0)
+                                snapshot.unlink()
                             else:
                                 begun = data(await session.call_tool("begin_project_patch", {"project_path": str(project), "title": "Gateway CI syntax update"}))
                                 self.assertEqual(begun["status"], "ok", begun)

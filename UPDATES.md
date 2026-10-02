@@ -10,6 +10,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.34.0] - 2026-10-02
+
+### Added
+- Mission Control file-review foundation in the English local panel: import an agent submission, inspect a bound source diff, independently approve/reject the snapshot, and apply it as a separate administrator action.
+- Opt-in Mission worker Gateway profile with six bounded workspace tools, private selected-file copies, hash-checked full/line editing, frozen submission and reconnect metadata. No direct production mutation or operator tool is advertised to this identity.
+- Root-owned private snapshots, live identity/scope/expiry/baseline checks, durable single-use execution claims and uncertain-interruption recovery without automatic replay. Review bytes cannot be replaced through an agent-owned proposal after import.
+- Unit, local API and isolated real-SSH checks for approval separation, substitution, stale baselines, revocation, resource budgets and production filesystem restrictions.
+
+### Fixed
+- Atomic replacement can validate an expected SHA-256 inside the pinned write, before backup or replacement, closing the baseline-check gap for reviewed operations.
+- Mission diff focus and scroll are preserved during routine panel polling.
+
+### Boundaries
+- Linux, dedicated Gateway identity, separate administrator credentials and root-protected existing source files are required. One connected VPS; no autonomous AI, arbitrary commands, full checkout, new/delete files or all-or-nothing multi-file deployment. Existing Project editor tokens remain agent-generated, not independent approval. No live server is provisioned or granted permissions by installing the release.
+
+---
+
 ## [0.33.0] - 2026-09-30
 
 ### Added

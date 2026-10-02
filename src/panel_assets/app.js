@@ -12,6 +12,8 @@
   let updateTimer;
   let operationSignature = null, selectedOperation = null, operationsRefreshed = 0, operationsLoading = false;
   let gatewayReloadPending = false;
+  let missionReloadPending = false;
+  let missionSignature = null;
   const labels = {disconnected:'Disconnected', connecting:'Connecting…', connected:'Connected', disconnecting:'Disconnecting…', error:'Connection error'};
   function notice(message) { $('notice').textContent = message || ''; $('notice').hidden = !message; }
   async function api(path, body) {
@@ -92,6 +94,7 @@
     }
     if (name === 'operations') refreshOperations();
     if (name === 'gateway') refreshGateway();
+    if (name === 'missions') refreshMissions();
   }
   for (const button of document.querySelectorAll('[data-section]')) button.addEventListener('click', () => section(button.dataset.section));
   function textNode(tag, text, className) {
@@ -172,6 +175,7 @@
     state = data;
     renderOperations(data);
     renderGateway(data);
+    renderMissions(data);
     const connection = data.connection;
     $('connection-status').textContent = labels[connection] || 'Unknown';
     $('connection-status').className = 'status ' + connection;
@@ -308,6 +312,13 @@
     try { render(await api('gateway/list', {})); } catch (error) { notice(error.message); }
   }
   $('reload-gateway').addEventListener('click', refreshGateway);
+  $('gateway-profile').addEventListener('change', () => {
+    $('gateway-profile-help').textContent = {
+      observer:'Observer reads project files and diagnostics; Linux permissions determine what it can read.',
+      'project-editor':'Confirmation tokens come from the agent’s session, not independent human approval. Linux permissions still limit writes.',
+      'mission-worker':'The agent edits private candidates only. A separate administrator reviews and applies them in Mission Control. Existing production files and all parents must be root-protected.'
+    }[$('gateway-profile').value];
+  });
   $('gateway-form').addEventListener('submit', async event => {
     event.preventDefault();
     if (state?.connection !== 'connected' || !state.gateway_supported || state.policy_busy) return;
@@ -319,6 +330,62 @@
     try { gatewayReloadPending = true; render(await api('gateway/create', {agent_id, public_key, project_roots, profile, expires_hours:Number($('gateway-expiry').value)})); }
     catch (error) { notice(error.message); }
   });
+  async function missionRequest(path, body, reload = false) {
+    if (state?.connection !== 'connected' || !state.mission_supported || state.policy_busy) return;
+    try { missionReloadPending = reload; render(await api('missions/' + path, body)); }
+    catch (error) { notice(error.message); }
+  }
+  async function refreshMissions() { await missionRequest('list', {}); }
+  function renderMissions(data) {
+    const available = data.connection === 'connected' && data.mission_supported && !data.policy_busy;
+    for (const id of ['reload-missions','load-submissions','mission-agent']) $(id).disabled = !available;
+    $('missions-message').textContent = data.mission_error || (data.connection === 'connected' && !data.mission_supported ? 'Connect as administrator to Guardian 0.34.0+ on the VPS.' : '');
+    $('missions-message').hidden = !$('missions-message').textContent;
+    const expired = (data.mission_review?.review?.expires_at || Infinity) * 1000 <= Date.now();
+    const signature = JSON.stringify([available, data.mission_error, data.mission_submissions, data.mission_reviews, data.mission_review, expired]);
+    if (signature === missionSignature) return; // Preserve focus and diff scroll during metrics polling.
+    missionSignature = signature;
+    const submissions = $('mission-submissions'); submissions.replaceChildren();
+    for (const item of data.mission_submissions?.submissions || []) {
+      const row = document.createElement('button'); row.type = 'button'; row.className = 'operation-row'; row.disabled = !available;
+      const description = document.createElement('span'); description.append(textNode('strong', item.title), textNode('small', item.agent_id + ' · ' + item.project_path, 'muted'));
+      row.append(description, textNode('span', 'Import for review', 'small-tag'));
+      row.addEventListener('click', () => missionRequest('import', {agent_id:item.agent_id, workspace_id:item.workspace_id}, true)); submissions.append(row);
+    }
+    if (!submissions.children.length) submissions.append(textNode('p', data.mission_submissions ? 'No current submissions found.' : 'Choose an enrolled Mission worker to find its submitted workspaces.', 'muted small'));
+    const reviews = $('mission-reviews'); reviews.replaceChildren();
+    for (const item of data.mission_reviews?.reviews || []) {
+      const row = document.createElement('button'); row.type = 'button'; row.className = 'operation-row'; row.disabled = !available;
+      const description = document.createElement('span'); description.append(textNode('strong', item.title), textNode('small', item.agent_id + ' · ' + item.project_path, 'muted'));
+      row.append(description, textNode('span', item.state, 'small-tag'));
+      row.addEventListener('click', () => missionRequest('inspect', {review_id:item.review_id})); reviews.append(row);
+    }
+    if (!reviews.children.length) reviews.append(textNode('p', 'No reviews loaded. Import a submission to create a private operator snapshot.', 'muted small'));
+    const detail = $('mission-detail'); detail.replaceChildren();
+    const item = data.mission_review?.review;
+    if (!item) { detail.append(textNode('p', 'Import a submission or select a review to see the exact diff.', 'muted small')); return; }
+    detail.append(textNode('h3', item.title), textNode('p', item.agent_id + ' · ' + item.project_path, 'muted small'));
+    for (const [label, value] of [['State',item.state], ['Expires',new Date(item.expires_at * 1000).toLocaleString('en-GB')], ['Snapshot SHA-256',item.digest]]) {
+      const row = document.createElement('div'); row.className = 'metadata-row'; row.append(textNode('span', label), textNode('strong', value)); detail.append(row);
+    }
+    const diff = textNode('pre', data.mission_review.diff || 'No content changes.', 'mission-diff'); diff.tabIndex = 0; detail.append(diff);
+    if (data.mission_review.diff_truncated) detail.append(textNode('p', 'Diff exceeds the review display budget. Split the change; this snapshot cannot be approved.', 'boundary-note'));
+    if (item.state === 'uncertain') detail.append(textNode('p', 'A write may have started. Inspect production and backups. Apply is disabled; never replay this review.', 'notice'));
+    const actions = document.createElement('div'); actions.className = 'policy-actions';
+    function action(label, path, body, warning, primary = false) {
+      const button = textNode('button', label, primary ? 'primary' : 'refresh'); button.type = 'button'; button.disabled = !available || primary && expired;
+      button.addEventListener('click', () => { if (confirm(warning)) missionRequest(path, body, true); }); actions.append(button);
+    }
+    if (item.state === 'pending') {
+      if (!data.mission_review.diff_truncated) action('Approve snapshot', 'decide', {review_id:item.review_id, digest:item.digest, decision:'approve'}, 'Approve exactly the displayed snapshot? This does not apply it yet.', true);
+      action('Reject', 'decide', {review_id:item.review_id, digest:item.digest, decision:'reject'}, 'Reject this snapshot? It cannot be applied later.');
+    }
+    if (item.state === 'approved') action('Apply to production', 'apply', {review_id:item.review_id, digest:item.digest}, 'Write this approved snapshot to production? Existing files are backed up. Multiple files are not an atomic transaction; an interrupted operation will not be replayed.', true);
+    detail.append(actions);
+    for (const file of item.result?.written || []) detail.append(textNode('p', file.relative_path + ' · backup: ' + file.backup, 'field-help'));
+  }
+  $('reload-missions').addEventListener('click', refreshMissions);
+  $('mission-submissions-form').addEventListener('submit', event => { event.preventDefault(); missionRequest('submissions', {agent_id:$('mission-agent').value.trim()}); });
   const finishedStates = new Set(['completed','failed','rolled_back','expired','cancelled','uncertain']);
   function renderOperations(data) {
     if (data.connection !== 'connected') operationsRefreshed = 0;
@@ -385,6 +452,10 @@
       if (gatewayReloadPending && state?.connection === 'connected' && !state.policy_busy) {
         gatewayReloadPending = false;
         if (!state.gateway_error) refreshGateway();
+      }
+      if (missionReloadPending && state?.connection === 'connected' && !state.policy_busy) {
+        missionReloadPending = false;
+        if (!state.mission_error) refreshMissions();
       }
     }
     catch (error) { notice(error.name === 'TimeoutError' || error.name === 'TypeError' ? 'The local panel is not responding. Check that its process is still running.' : error.message); }
