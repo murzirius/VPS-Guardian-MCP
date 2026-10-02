@@ -155,10 +155,15 @@ def _project(policy, value):
     return project
 
 
-def _target(policy, project, relative):
+def _relative(relative):
     if (not isinstance(relative, str) or len(relative) > 512 or "\\" in relative
             or not _allowed(relative) or any(part in {".", ".."} for part in relative.split("/"))):
         raise ValueError("Choose a non-hidden, non-sensitive relative path.")
+    return relative
+
+
+def _target(policy, project, relative):
+    relative = _relative(relative)
     path = _project(policy, str(project)) / relative
     gateway._trusted_directory(path.parent)
     # Each file and ancestor is root-owned and not group/world writable. The
@@ -198,7 +203,7 @@ def _summary(item):
     return result
 
 
-def _validate_workspace(value, policy, workspace_id):
+def _validate_workspace(value, policy, workspace_id, *, check_baseline=True):
     if value.get("workspace_id") != workspace_id or value.get("agent_id") != policy["agent_id"]:
         raise ValueError("Workspace identity mismatch.")
     if (not isinstance(value.get("title"), str) or not 1 <= len(value["title"]) <= 120
@@ -218,10 +223,13 @@ def _validate_workspace(value, policy, workspace_id):
         raise ValueError("File count exceeded.")
     seen, total = set(), 0
     for file in files:
-        relative = file["relative_path"]
-        # Validate path and live baseline before importing an untrusted record.
-        _, original = _target(policy, project, relative)
-        if relative in seen or file.get("baseline_sha256") != _hash(original):
+        relative = _relative(file["relative_path"])
+        baseline = file.get("baseline_sha256")
+        if relative in seen or not isinstance(baseline, str) or not DIGEST.fullmatch(baseline):
+            raise ValueError("Invalid baseline or duplicate file.")
+        # Reading an already copied candidate is not production authorization.
+        # Stage/import/approval/apply still require a fresh, protected baseline.
+        if check_baseline and baseline != _hash(_target(policy, project, relative)[1]):
             raise ValueError("Production changed or duplicate file.")
         seen.add(relative)
         _text(file["candidate"])
@@ -231,10 +239,11 @@ def _validate_workspace(value, policy, workspace_id):
     return value
 
 
-def _workspace(directory, workspace_id, policy):
+def _workspace(directory, workspace_id, policy, *, check_baseline=True):
     if not isinstance(workspace_id, str) or not WORKSPACE_ID.fullmatch(workspace_id):
         raise ValueError("Invalid workspace ID.")
-    return _validate_workspace(_read_json(directory / (workspace_id + ".json"), uid=policy["uid"]), policy, workspace_id)
+    return _validate_workspace(_read_json(directory / (workspace_id + ".json"), uid=policy["uid"]), policy, workspace_id,
+                               check_baseline=check_baseline)
 
 
 @_safe_errors
@@ -267,7 +276,7 @@ def read_mission_workspace(workspace_id: str, relative_path: str, byte_offset: i
     if type(byte_offset) is not int or not 0 <= byte_offset <= MAX_FILE_BYTES or type(max_bytes) is not int or not 100 <= max_bytes <= 24000:
         raise ValueError("Invalid read range.")
     with _workspace_lock(policy) as directory:
-        item = _workspace(directory, workspace_id, policy)
+        item = _workspace(directory, workspace_id, policy, check_baseline=False)
         file = next((f for f in item["files"] if f["relative_path"] == relative_path), None)
         if file is None:
             raise ValueError("File is not in this workspace.")
@@ -277,7 +286,7 @@ def read_mission_workspace(workspace_id: str, relative_path: str, byte_offset: i
         raw[byte_offset:].decode("utf-8")  # Reject a start in the middle of a character.
         content = fragment.decode("utf-8", errors="ignore")
         fragment = content.encode("utf-8")
-        return {"status": "ok", "workspace": _summary(item), "relative_path": relative_path, "content": content,
+        return {"status": "ok", "workspace": _summary(item), "live_baseline_checked": False, "relative_path": relative_path, "content": content,
                 "next_byte_offset": byte_offset + len(fragment) if byte_offset + len(fragment) < len(raw) else None}
 
 
@@ -312,9 +321,9 @@ def submit_mission_workspace(workspace_id: str):
 def list_mission_workspaces():
     policy = _worker_policy()
     with _workspace_lock(policy) as directory:
-        result = [_summary(_workspace(directory, path.stem, policy)) for path in _paths(directory, WORKSPACE_ID, MAX_WORKSPACES)
+        result = [_summary(_workspace(directory, path.stem, policy, check_baseline=False)) for path in _paths(directory, WORKSPACE_ID, MAX_WORKSPACES)
                   if _read_json(path, uid=policy["uid"]).get("expires_at", 0) > time.time()]
-    return {"status": "ok", "workspaces": result}
+    return {"status": "ok", "workspaces": result, "live_baseline_checked": False}
 
 
 @_safe_errors
@@ -400,10 +409,10 @@ def list_mission_submissions(agent_id: str):
         item = _read_json(path, uid=policy["uid"])
         if type(item.get("expires_at")) in (int, float) and item["expires_at"] <= time.time():
             continue
-        _validate_workspace(item, policy, path.stem)
+        _validate_workspace(item, policy, path.stem, check_baseline=False)
         if item["state"] == "submitted":
             result.append(_summary(item))
-    return {"status": "ok", "submissions": result}
+    return {"status": "ok", "submissions": result, "live_baseline_checked": False}
 
 
 @_safe_errors

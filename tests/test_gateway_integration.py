@@ -154,6 +154,11 @@ LogLevel VERBOSE
                                 applied = missions.apply_mission_review(review["review_id"], review["digest"])
                                 self.assertEqual(applied["review"]["state"], "completed", applied)
                                 self.assertEqual((project / "main.py").read_text(), "print('reviewed')\n")
+                                copied = data(await session.call_tool("read_mission_workspace", {"workspace_id": workspace["workspace_id"], "relative_path": "main.py"}))
+                                self.assertEqual(copied["status"], "ok", copied)
+                                self.assertFalse(copied["live_baseline_checked"])
+                                recovered = data(await session.call_tool("list_mission_workspaces", {}))
+                                self.assertEqual(recovered["workspaces"][0]["workspace_id"], workspace["workspace_id"])
                                 # Root snapshots remain unreadable to the worker.
                                 snapshot = gateway.POLICY_BASE / "reviews" / (review["review_id"] + ".json")
                                 leak = subprocess.run(["/usr/sbin/runuser", "-u", account, "--", "/bin/cat", str(snapshot)], capture_output=True, timeout=5)

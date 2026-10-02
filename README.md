@@ -34,14 +34,14 @@ The English-language panel runs **on your computer, not on the VPS or this proje
 With [uv](https://docs.astral.sh/uv/) installed on your computer:
 
 ```bash
-uvx --from vps-guardian-mcp==0.34.0 vps-guardian-panel
+uvx --from vps-guardian-mcp==0.34.1 vps-guardian-panel
 ```
 
 Without uv, install in a local virtual environment. Windows PowerShell:
 
 ```powershell
 py -m venv .guardian-panel
-.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.34.0
+.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.34.1
 .\.guardian-panel\Scripts\python.exe -m src.local_panel
 ```
 
@@ -49,7 +49,7 @@ Linux/macOS:
 
 ```bash
 python3 -m venv .guardian-panel
-.guardian-panel/bin/pip install vps-guardian-mcp==0.34.0
+.guardian-panel/bin/pip install vps-guardian-mcp==0.34.1
 .guardian-panel/bin/vps-guardian-panel
 ```
 
@@ -58,7 +58,7 @@ The browser opens automatically. Enter the VPS address, SSH user, port and **pat
 To upgrade an existing pip installation on the VPS:
 
 ```bash
-/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.34.0
+/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.34.1
 ```
 
 Upgrade any other Guardian environments used by your agents, then reconnect **all agents once** so they start the policy-aware server. Subsequent permission changes affect new calls in those sessions without a restart. In-flight operations are not cancelled, and cached client tool lists may still show disabled tools; calls to those tools are rejected.
@@ -99,7 +99,7 @@ Requires **Linux and Guardian 0.34.0+ on the VPS and your computer**, a dedicate
 1. Upgrade both Python installations and reconnect. In **Gateway**, enroll a new agent with **Mission worker** permissions and narrowly scoped existing project directories. Do not reuse the administrator key in its MCP client. Existing Editor accounts retain their old behavior.
 2. Select production files the worker can **read but not write**. Every directory component must be root-owned and not group/world writable; existing files must also be root-owned, not group/world writable, single-linked regular files without setuid/setgid bits. Guardian verifies this at creation, import, approval and apply. It never changes project ownership, ACLs or service configuration for you. Agent-owned deployments and writable project ancestors are refused rather than silently weakened; let an administrator review an appropriate root-managed copy if needed. Never grant sudo, Docker access or other privileged credentials to a worker.
 3. Ask the agent to prepare a workspace, for example `create_mission_workspace(project_path="/srv/example-app", relative_paths=["main.py"], title="Improve application message")`. Only those selected files are copied into its private state; this is not a complete checkout. Reads return bounded fragments and SHA-256 values. A small edit can use `stage_mission_line_edit` with the candidate's current hash; a stale hash returns a conflict rather than overwriting another edit. The complete-file staging alternative is bounded too.
-4. The agent submits its workspace. **Production is still unchanged.** Submission freezes normal editing. After reconnecting, `list_mission_workspaces` recovers IDs/hashes without resending source.
+4. The agent submits its workspace. **Production is still unchanged.** Submission freezes normal editing. After reconnecting, `list_mission_workspaces` recovers IDs/hashes without resending source. Use 0.34.1+ to retain copied-source reads and listings after production changes: those replies explicitly do not verify the live baseline. They are not permission to apply a stale proposal.
 5. On your computer, open **Mission Control**, enter the worker name, click **Find submissions**, then **Import for review**. The operator copies validated candidate bytes into private root-owned storage. Changes to an agent-owned proposal afterwards cannot alter this review; import of the same workspace returns the original snapshot, not a replacement. Create a new workspace to revise an already imported proposal.
 6. Inspect the exact diff, identity, project, expiry and snapshot hash. Choose **Approve snapshot** or **Reject**. Approval alone writes no production files. Truncated diffs cannot be approved: split a large change into smaller reviews. This is independent operator authority, unlike an agent-generated controlled token.
 7. Choose **Apply to production** separately. Guardian rechecks the approved hash, active agent identity, expiry, roots, filesystem protection and live baseline. Changed source, revocation or expired access refuses execution. Existing files receive private unique backups. An apply is single-use and is durably claimed before writing; interrupted work becomes **uncertain** and cannot be automatically replayed. Inspect live files/backups before preparing another review.
@@ -153,7 +153,7 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.34.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.34.1
 ```
 
 For development from source instead:
@@ -197,7 +197,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.34.0",
+        "@murzirius/vps-guardian-mcp@0.34.1",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -226,7 +226,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.34.0
+@murzirius/vps-guardian-mcp@0.34.1
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -246,7 +246,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.34.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.34.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.

@@ -112,6 +112,22 @@ class TestMissionWorkflow(unittest.TestCase):
         self.assertEqual(operator(missions.apply_mission_review, review["review_id"], review["digest"])["status"], "error")
         self.assertEqual(self.file.read_bytes(), b"print('external')\n")
 
+    def test_copied_source_and_ids_survive_production_change_without_authorizing_it(self):
+        workspace = self.draft()
+        missions.submit_mission_workspace(workspace)
+        self.file.write_bytes(b"print('external')\n")
+        read = missions.read_mission_workspace(workspace, "main.py")
+        self.assertEqual(read["status"], "ok", read)
+        self.assertEqual(read["content"], "print('candidate')\n")
+        self.assertFalse(read["live_baseline_checked"])
+        listed = missions.list_mission_workspaces()
+        self.assertEqual(listed["workspaces"][0]["workspace_id"], workspace)
+        self.assertFalse(listed["live_baseline_checked"])
+        submitted = operator(missions.list_mission_submissions, "bot")
+        self.assertEqual(submitted["submissions"][0]["workspace_id"], workspace)
+        self.assertEqual(operator(missions.import_mission_review, "bot", workspace)["status"], "error")
+        self.assertEqual(self.file.read_bytes(), b"print('external')\n")
+
     def test_wrong_digest_rejection_and_scope_change(self):
         _, review = self.review()
         self.assertEqual(operator(missions.decide_mission_review, review["review_id"], "0" * 64, "approve")["status"], "error")

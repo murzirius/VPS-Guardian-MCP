@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.34.1] - 2026-10-02
+
+### Fixed
+- Private candidate reads, workspace ID recovery and submission listings remain available after production content changes. These responses explicitly report that the live baseline was not checked; they grant no production authority. Staging, import, approval and apply still reject stale baselines and enforce current scope/identity.
+- Regression coverage for reconnecting to copied source while refusing to import its outdated production baseline.
+
+---
+
 ## [0.34.0] - 2026-10-02
 
 ### Added
