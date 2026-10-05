@@ -10,6 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.35.0] - 2026-10-05
+
+### Added
+- Incrementally extend Mission drafts with selected existing files, propose new source files and hash-checked deletions, and read compact line windows without repeating the full manifest.
+- Independent Mission file/count/aggregate limits in the English Limits panel: normal ceilings of 16 files, 512 KB per file and 1 MB each of source/candidate text, with smaller host-enforced budgets on constrained VPSs. Previously saved custom limits migrate conservatively.
+- Explicit CREATE/UPDATE/DELETE actions in operator review and application results. New files use no-overwrite publication and non-executable 0644 permissions; deletion retains a private unique backup. No directories, commands or candidate code are executed.
+
+### Changed
+- Line edits support insertion and appending, including empty new candidates. Unchanged selected files are not rewritten.
+- Review matching trims equal edges and refuses large changed line regions or truncated byte-capped diffs. Exact source hashes, expiry, revocation, root protection, single-use apply and uncertain-state recovery remain mandatory.
+- Existing Gateway allowlists are not silently expanded. Enroll a new Mission worker to obtain the four additional tools after upgrading.
+
 ## [0.34.1] - 2026-10-02
 
 ### Fixed

@@ -68,7 +68,7 @@
 </section>
 <section id="section-missions" class="card access-card" hidden>
 <div class="section-top"><h2>Mission Control</h2><button id="reload-missions" type="button" class="refresh" disabled>Refresh reviews</button></div>
-<p class="muted small">Review a Mission worker's private changes before anything reaches production. Approval and Apply are separate operator actions bound to the exact snapshot.</p>
+<p class="muted small">Review updates, new files and deletions before anything reaches production. Approval and Apply are separate operator actions bound to the exact snapshot. New files require existing protected parents; no code is executed.</p>
 <div id="missions-message" class="notice" role="status" hidden></div>
 <form id="mission-submissions-form"><label for="mission-agent">Mission worker name</label><div class="form-row"><input id="mission-agent" placeholder="review-bot" maxlength="24" pattern="[a-z][a-z0-9-]{0,23}" required spellcheck="false"><button id="load-submissions" type="submit" class="refresh" disabled>Find submissions</button></div></form>
 <div id="mission-submissions" class="operations-list"><p class="muted small">Choose an enrolled Mission worker to find its submitted workspaces.</p></div>

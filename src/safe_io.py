@@ -189,3 +189,85 @@ def atomic_replace(path: str, data: bytes, backup: bool = False, limit: int = 2 
                     os.unlink(target(item), **({"dir_fd": parent} if parent is not None else {}))
                 except OSError:
                     pass
+
+
+def _same_parent(parent, parent_path):
+    if parent is not None:
+        pinned = os.fstat(parent)
+        current = os.stat(parent_path, follow_symlinks=False)
+        if (pinned.st_dev, pinned.st_ino) != (current.st_dev, current.st_ino):
+            raise OSError("Parent directory changed during the write.")
+
+
+def atomic_create(path: str, data: bytes, limit: int = 512000):
+    """Publish a complete new regular file without ever overwriting a target.
+
+    Callers must authorize the parent. New source files are non-executable 0644;
+    an exclusive hard-link publication gives no-replace semantics on POSIX.
+    """
+    if len(data) > limit:
+        raise OSError("Write exceeds its byte budget.")
+    absolute = os.path.abspath(path)
+    parent_path, name = os.path.split(absolute)
+    with directory_fd(parent_path) as parent:
+        kw = {"dir_fd": parent} if parent is not None else {}
+        target = lambda item: os.path.join(parent_path, item) if parent is None else item
+        temporary = ".guardian_tmp_" + secrets.token_hex(12)
+        descriptor = os.open(target(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600, **kw)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                if hasattr(os, "fchmod"):
+                    os.fchmod(stream.fileno(), 0o644)
+                os.fsync(stream.fileno())
+            _same_parent(parent, parent_path)
+            os.link(target(temporary), target(name), follow_symlinks=False,
+                    **({"src_dir_fd": parent, "dst_dir_fd": parent} if parent is not None else {}))
+            os.unlink(target(temporary), **kw)
+            if parent is not None:
+                os.fsync(parent)
+        finally:
+            try:
+                os.unlink(target(temporary), **kw)
+            except FileNotFoundError:
+                pass
+
+
+def backed_up_delete(path: str, expected_sha256: str, limit: int = 512000):
+    """Delete a regular single-linked baseline, retaining a private unique copy.
+
+    This is not rollback or a multi-file transaction. Callers must authorize a
+    protected parent; failures after unlink must be treated as uncertain.
+    """
+    absolute = os.path.abspath(path)
+    parent_path, name = os.path.split(absolute)
+    with directory_fd(parent_path) as parent:
+        kw = {"dir_fd": parent} if parent is not None else {}
+        target = lambda item: os.path.join(parent_path, item) if parent is None else item
+        before = os.stat(target(name), follow_symlinks=False, **kw)
+        descriptor = os.open(target(name), os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), **kw)
+        with os.fdopen(descriptor, "rb") as stream:
+            actual = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(before.st_mode) or not stat.S_ISREG(actual.st_mode)
+                    or actual.st_nlink != 1 or actual.st_size > limit
+                    or (actual.st_dev, actual.st_ino) != (before.st_dev, before.st_ino)):
+                raise OSError("Delete requires a bounded regular single-linked file.")
+            original = stream.read(limit + 1)
+        if len(original) > limit or hashlib.sha256(original).hexdigest() != expected_sha256:
+            raise OSError("Delete baseline changed.")
+        backup = name + ".bak." + secrets.token_hex(12)
+        descriptor = os.open(target(backup), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600, **kw)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(original)
+            stream.flush()
+            os.fsync(stream.fileno())
+        current = os.stat(target(name), follow_symlinks=False, **kw)
+        identity = lambda info: (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        if identity(current) != identity(before):
+            raise OSError("Delete target changed; private backup retained.")
+        _same_parent(parent, parent_path)
+        os.unlink(target(name), **kw)
+        if parent is not None:
+            os.fsync(parent)
+        return os.path.join(parent_path, backup)

@@ -39,7 +39,9 @@ EDITOR_TOOLS = DEFAULT_TOOLS + ["search_project_code", "begin_project_patch", "s
                                 "preview_project_patch", "run_project_checks", "apply_project_patch",
                                 "list_operations", "get_operation"]
 MISSION_TOOLS = DEFAULT_TOOLS + ["search_project_code", "create_mission_workspace", "read_mission_workspace",
-                                 "stage_mission_file", "stage_mission_line_edit", "submit_mission_workspace", "list_mission_workspaces"]
+                                 "stage_mission_file", "stage_mission_line_edit", "submit_mission_workspace", "list_mission_workspaces",
+                                 "add_mission_workspace_files", "stage_mission_new_file", "stage_mission_file_deletion",
+                                 "read_mission_workspace_lines"]
 
 
 def _account(agent_id: str) -> str:

@@ -459,6 +459,7 @@ if _TOOL_PROFILE not in {"core", "full"}:
 _CORE_TOOLS = {
     "create_mission_workspace", "read_mission_workspace", "stage_mission_file", "stage_mission_line_edit",
     "submit_mission_workspace", "list_mission_workspaces",
+    "add_mission_workspace_files", "stage_mission_new_file", "stage_mission_file_deletion", "read_mission_workspace_lines",
     "list_operations", "get_operation",
     "get_system_health", "get_top_processes", "check_service_status", "read_service_logs",
     "get_vps_topology", "find_workload", "get_workload_health", "diagnose_workload",
@@ -2318,7 +2319,7 @@ def troubleshoot_application_crash_prompt() -> str:
 
 @guardian_tool()
 def create_mission_workspace(project_path: str, relative_paths: list[str], title: str) -> str:
-    """Copy up to three protected text files into a Mission worker's private proposal; never write production."""
+    """Copy selected protected source files into a bounded Mission proposal; [] starts a new-files-only draft."""
     from src.mission_control import create_mission_workspace as operation
     return json.dumps(operation(project_path, relative_paths, title))
 
@@ -2340,7 +2341,7 @@ def stage_mission_file(workspace_id: str, relative_path: str, content: str, expe
 @guardian_tool()
 def stage_mission_line_edit(workspace_id: str, relative_path: str, start_line: int, end_line: int,
                             replacement: str, expected_sha256: str) -> str:
-    """Edit inclusive lines in a private candidate without resending the complete file."""
+    """Edit inclusive candidate lines; end_line=start_line-1 inserts, including at EOF. No production write."""
     from src.mission_control import stage_mission_line_edit as operation
     return json.dumps(operation(workspace_id, relative_path, start_line, end_line, replacement, expected_sha256))
 
@@ -2357,6 +2358,34 @@ def list_mission_workspaces() -> str:
     """Recover private workspace IDs and candidate hashes after reconnecting, without source output."""
     from src.mission_control import list_mission_workspaces as operation
     return json.dumps(operation())
+
+
+@guardian_tool()
+def add_mission_workspace_files(workspace_id: str, relative_paths: list[str]) -> str:
+    """Add selected existing files to a draft within live Mission file/text limits; no recursive scan."""
+    from src.mission_control import add_mission_workspace_files as operation
+    return json.dumps(operation(workspace_id, relative_paths))
+
+
+@guardian_tool()
+def stage_mission_new_file(workspace_id: str, relative_path: str, content: str) -> str:
+    """Propose creating a 0644 source file under an existing protected parent; independent operator apply required."""
+    from src.mission_control import stage_mission_new_file as operation
+    return json.dumps(operation(workspace_id, relative_path, content))
+
+
+@guardian_tool()
+def stage_mission_file_deletion(workspace_id: str, relative_path: str, expected_sha256: str) -> str:
+    """Propose deleting a selected candidate with a current hash; operator apply retains a private baseline backup."""
+    from src.mission_control import stage_mission_file_deletion as operation
+    return json.dumps(operation(workspace_id, relative_path, expected_sha256))
+
+
+@guardian_tool()
+def read_mission_workspace_lines(workspace_id: str, relative_path: str, start_line: int = 1, max_lines: int = 80) -> str:
+    """Read up to 200 candidate lines/24 KB with this file's hash only; never execute code or authorize stale apply."""
+    from src.mission_control import read_mission_workspace_lines as operation
+    return json.dumps(operation(workspace_id, relative_path, start_line, max_lines))
 
 
 def main() -> None:

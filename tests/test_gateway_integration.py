@@ -43,6 +43,7 @@ class TestGatewaySSH(unittest.TestCase):
             project = temporary / "project"
             project.mkdir(mode=0o755)
             (project / "main.py").write_text("print('gateway-ci')\n")
+            (project / "obsolete.py").write_text("# obsolete source\n")
             key = temporary / "agent-key"
             host_key = temporary / "host-key"
             for path in (key, host_key):
@@ -139,6 +140,14 @@ LogLevel VERBOSE
                                 staged = data(await session.call_tool("stage_mission_line_edit", {"workspace_id": workspace["workspace_id"], "relative_path": "main.py", "start_line": 1, "end_line": 1,
                                                                                                   "replacement": "print('reviewed')\n", "expected_sha256": workspace["files"][0]["candidate_sha256"]}))
                                 self.assertEqual(staged["status"], "ok", staged)
+                                window = data(await session.call_tool("read_mission_workspace_lines", {"workspace_id": workspace["workspace_id"], "relative_path": "main.py"}))
+                                self.assertEqual(window["content"], "print('reviewed')\n")
+                                added = data(await session.call_tool("add_mission_workspace_files", {"workspace_id": workspace["workspace_id"], "relative_paths": ["obsolete.py"]}))
+                                self.assertEqual(added["status"], "ok", added)
+                                deleted = data(await session.call_tool("stage_mission_file_deletion", {"workspace_id": workspace["workspace_id"], "relative_path": "obsolete.py", "expected_sha256": added["workspace"]["files"][1]["candidate_sha256"]}))
+                                self.assertEqual(deleted["status"], "ok", deleted)
+                                created_file = data(await session.call_tool("stage_mission_new_file", {"workspace_id": workspace["workspace_id"], "relative_path": "new.py", "content": "# independently reviewed\n"}))
+                                self.assertEqual(created_file["status"], "ok", created_file)
                                 self.assertEqual(data(await session.call_tool("submit_mission_workspace", {"workspace_id": workspace["workspace_id"]}))["status"], "ok")
                                 self.assertEqual((project / "main.py").read_text(), "print('gateway-ci')\n")
                                 reviewed = missions.import_mission_review(agent_id, workspace["workspace_id"])
@@ -154,6 +163,12 @@ LogLevel VERBOSE
                                 applied = missions.apply_mission_review(review["review_id"], review["digest"])
                                 self.assertEqual(applied["review"]["state"], "completed", applied)
                                 self.assertEqual((project / "main.py").read_text(), "print('reviewed')\n")
+                                self.assertFalse((project / "obsolete.py").exists())
+                                self.assertEqual((project / "new.py").read_text(), "# independently reviewed\n")
+                                self.assertEqual((project / "new.py").stat().st_uid, 0)
+                                self.assertEqual((project / "new.py").stat().st_mode & 0o777, 0o644)
+                                removed = next(f for f in applied["review"]["result"]["written"] if f["action"] == "delete")
+                                self.assertEqual(Path(removed["backup"]).read_text(), "# obsolete source\n")
                                 copied = data(await session.call_tool("read_mission_workspace", {"workspace_id": workspace["workspace_id"], "relative_path": "main.py"}))
                                 self.assertEqual(copied["status"], "ok", copied)
                                 self.assertFalse(copied["live_baseline_checked"])

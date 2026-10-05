@@ -23,7 +23,11 @@ LIMIT_SPECS = {
     "changeset_total_bytes": (10000, 400000, 400000, 100000, "Configuration ChangeSet text (bytes)"),
     "agent_job_concurrency": (0, 2, 2, 1, "Concurrent Agent Job checks"),
     "capsule_concurrency": (0, 1, 1, 0, "Test Capsules (0 disables, 1 allows)"),
+    "mission_files": (1, 16, 16, 2, "Files per Mission workspace"),
+    "mission_file_bytes": (1000, 512000, 512000, 64000, "Mission file (bytes)"),
+    "mission_total_bytes": (10000, 1000000, 1000000, 128000, "Mission source/candidate text (bytes each)"),
 }
+MISSION_LIMITS = frozenset({"mission_files", "mission_file_bytes", "mission_total_bytes"})
 PRESETS = {
     "auto": {key: spec[2] for key, spec in LIMIT_SPECS.items()},
     "small": {key: spec[3] for key, spec in LIMIT_SPECS.items()},
@@ -43,6 +47,12 @@ def validate_settings(value: Any) -> dict:
         if limits:
             raise ValueError("Preset profiles do not accept custom values.")
     else:
+        if set(limits) == set(LIMIT_SPECS) - MISSION_LIMITS:
+            # Preserve previously saved custom settings without granting larger
+            # Mission budgets than the old patch/read limits allowed.
+            limits = {**limits, "mission_files": limits["project_patch_files"],
+                      "mission_file_bytes": limits["project_read_bytes"],
+                      "mission_total_bytes": limits["project_patch_bytes"]}
         if set(limits) != set(LIMIT_SPECS):
             raise ValueError("Custom settings must include every supported limit.")
         for key, value in limits.items():
@@ -97,11 +107,13 @@ def get_runtime_budget(_state=None) -> Dict[str, Any]:
                         directory_items=1000, journal_lines=150, project_search_files=400,
                         project_search_bytes=2000000, project_patch_files=2, project_patch_bytes=200000,
                         changeset_files=2, changeset_total_bytes=200000, agent_job_concurrency=1)
+        ceilings.update(mission_files=4, mission_file_bytes=128000, mission_total_bytes=256000)
     if memory.available < 384 * 1024 * 1024:
         ceilings["capsule_concurrency"] = 0
     if critical:
         ceilings.update(project_search_files=100, project_search_bytes=1000000,
-                        project_patch_files=1, project_patch_bytes=100000)
+                        project_patch_files=1, project_patch_bytes=100000,
+                        mission_files=2, mission_file_bytes=64000, mission_total_bytes=128000)
     limits = {key: min(value, ceilings[key]) for key, value in requested.items()}
     return {
         "status": "ok", "profile": "critical" if critical else "constrained" if constrained else "standard",

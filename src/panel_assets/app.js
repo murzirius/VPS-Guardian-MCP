@@ -368,8 +368,9 @@
     for (const [label, value] of [['State',item.state], ['Expires',new Date(item.expires_at * 1000).toLocaleString('en-GB')], ['Snapshot SHA-256',item.digest]]) {
       const row = document.createElement('div'); row.className = 'metadata-row'; row.append(textNode('span', label), textNode('strong', value)); detail.append(row);
     }
+    for (const file of item.files || []) detail.append(textNode('p', (file.action || 'update').toUpperCase() + ' · ' + file.relative_path + ' · ' + (file.candidate_bytes ?? 'unknown') + ' candidate bytes', 'field-help'));
     const diff = textNode('pre', data.mission_review.diff || 'No content changes.', 'mission-diff'); diff.tabIndex = 0; detail.append(diff);
-    if (data.mission_review.diff_truncated) detail.append(textNode('p', 'Diff exceeds the review display budget. Split the change; this snapshot cannot be approved.', 'boundary-note'));
+    if (data.mission_review.diff_truncated) detail.append(textNode('p', 'Diff exceeds the display or comparison budget. Split the change; this snapshot cannot be approved.', 'boundary-note'));
     if (item.state === 'uncertain') detail.append(textNode('p', 'A write may have started. Inspect production and backups. Apply is disabled; never replay this review.', 'notice'));
     const actions = document.createElement('div'); actions.className = 'policy-actions';
     function action(label, path, body, warning, primary = false) {
@@ -380,9 +381,9 @@
       if (!data.mission_review.diff_truncated) action('Approve snapshot', 'decide', {review_id:item.review_id, digest:item.digest, decision:'approve'}, 'Approve exactly the displayed snapshot? This does not apply it yet.', true);
       action('Reject', 'decide', {review_id:item.review_id, digest:item.digest, decision:'reject'}, 'Reject this snapshot? It cannot be applied later.');
     }
-    if (item.state === 'approved') action('Apply to production', 'apply', {review_id:item.review_id, digest:item.digest}, 'Write this approved snapshot to production? Existing files are backed up. Multiple files are not an atomic transaction; an interrupted operation will not be replayed.', true);
+    if (item.state === 'approved') action('Apply to production', 'apply', {review_id:item.review_id, digest:item.digest}, 'Apply the displayed updates, creations and deletions to production? Updated and deleted files are backed up. New files are non-executable 0644. Multiple files are not an atomic transaction; interrupted work is never replayed.', true);
     detail.append(actions);
-    for (const file of item.result?.written || []) detail.append(textNode('p', file.relative_path + ' · backup: ' + file.backup, 'field-help'));
+    for (const file of item.result?.written || []) detail.append(textNode('p', file.relative_path + ' · ' + (file.action || 'update') + ' · ' + (file.backup ? 'backup: ' + file.backup : 'new file: no previous version'), 'field-help'));
   }
   $('reload-missions').addEventListener('click', refreshMissions);
   $('mission-submissions-form').addEventListener('submit', event => { event.preventDefault(); missionRequest('submissions', {agent_id:$('mission-agent').value.trim()}); });

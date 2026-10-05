@@ -34,14 +34,14 @@ The English-language panel runs **on your computer, not on the VPS or this proje
 With [uv](https://docs.astral.sh/uv/) installed on your computer:
 
 ```bash
-uvx --from vps-guardian-mcp==0.34.1 vps-guardian-panel
+uvx --from vps-guardian-mcp==0.35.0 vps-guardian-panel
 ```
 
 Without uv, install in a local virtual environment. Windows PowerShell:
 
 ```powershell
 py -m venv .guardian-panel
-.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.34.1
+.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.35.0
 .\.guardian-panel\Scripts\python.exe -m src.local_panel
 ```
 
@@ -49,7 +49,7 @@ Linux/macOS:
 
 ```bash
 python3 -m venv .guardian-panel
-.guardian-panel/bin/pip install vps-guardian-mcp==0.34.1
+.guardian-panel/bin/pip install vps-guardian-mcp==0.35.0
 .guardian-panel/bin/vps-guardian-panel
 ```
 
@@ -58,7 +58,7 @@ The browser opens automatically. Enter the VPS address, SSH user, port and **pat
 To upgrade an existing pip installation on the VPS:
 
 ```bash
-/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.34.1
+/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.35.0
 ```
 
 Upgrade any other Guardian environments used by your agents, then reconnect **all agents once** so they start the policy-aware server. Subsequent permission changes affect new calls in those sessions without a restart. In-flight operations are not cancelled, and cached client tool lists may still show disabled tools; calls to those tools are rejected.
@@ -94,17 +94,20 @@ Atomic project writes preserve the original file's owner/group. Directory write 
 
 #### Mission Control: private proposals and operator approval
 
-Requires **Linux and Guardian 0.34.0+ on the VPS and your computer**, a dedicated **Mission worker** Gateway account, and a separate administrator key for the local panel. This is a bounded file-review workflow for **one connected VPS**, not an autonomous AI, general task scheduler or full filesystem/container sandbox. The external agent prepares changes; Guardian never starts an LLM or executes candidate code.
+Requires **Linux and Guardian 0.35.0+ on the VPS and your computer** for the expanded workspace tools, a dedicated **Mission worker** Gateway account, and a separate administrator key for the local panel. This is a bounded file-review workflow for **one connected VPS**, not an autonomous AI, general task scheduler or full filesystem/container sandbox. The external agent prepares changes; Guardian never starts an LLM or executes candidate code.
 
-1. Upgrade both Python installations and reconnect. In **Gateway**, enroll a new agent with **Mission worker** permissions and narrowly scoped existing project directories. Do not reuse the administrator key in its MCP client. Existing Editor accounts retain their old behavior.
+1. Upgrade both Python installations and reconnect. In **Gateway**, enroll a new agent with **Mission worker** permissions and narrowly scoped existing project directories. Do not reuse the administrator key in its MCP client. Existing Editor accounts retain their old behavior. Previously enrolled Mission workers keep their exact allowlists; upgrading does not silently grant the four additional tools. Enroll a new worker with a new name/key to use them, and revoke the old identity when its work is finished.
 2. Select production files the worker can **read but not write**. Every directory component must be root-owned and not group/world writable; existing files must also be root-owned, not group/world writable, single-linked regular files without setuid/setgid bits. Guardian verifies this at creation, import, approval and apply. It never changes project ownership, ACLs or service configuration for you. Agent-owned deployments and writable project ancestors are refused rather than silently weakened; let an administrator review an appropriate root-managed copy if needed. Never grant sudo, Docker access or other privileged credentials to a worker.
-3. Ask the agent to prepare a workspace, for example `create_mission_workspace(project_path="/srv/example-app", relative_paths=["main.py"], title="Improve application message")`. Only those selected files are copied into its private state; this is not a complete checkout. Reads return bounded fragments and SHA-256 values. A small edit can use `stage_mission_line_edit` with the candidate's current hash; a stale hash returns a conflict rather than overwriting another edit. The complete-file staging alternative is bounded too.
+3. Ask the agent to prepare a workspace, for example `create_mission_workspace(project_path="/srv/example-app", relative_paths=["main.py"], title="Improve application message")`. Only selected files are copied into private state; this is not a complete checkout or a recursive scan. A draft can be extended with selected existing files, or start with `relative_paths=[]` for new files only. Reads return bounded fragments and SHA-256 values. A small edit can use `stage_mission_line_edit` with the candidate's current hash; a stale hash returns a conflict rather than overwriting another edit. For insertion use `end_line=start_line-1`, including appending at the line after EOF. Compact line-window reads return just that file's hash rather than the full manifest. Complete-file staging is bounded too.
+   New source files must have an **existing root-protected parent** and an absent target; directories are not created. Deletion is a hash-checked proposal for a selected existing file; deleting a newly proposed file merely cancels its creation. Empty files are valid, and their CREATE/DELETE action is explicitly shown even when there are no diff lines. No production files change during any of these draft operations.
 4. The agent submits its workspace. **Production is still unchanged.** Submission freezes normal editing. After reconnecting, `list_mission_workspaces` recovers IDs/hashes without resending source. Use 0.34.1+ to retain copied-source reads and listings after production changes: those replies explicitly do not verify the live baseline. They are not permission to apply a stale proposal.
 5. On your computer, open **Mission Control**, enter the worker name, click **Find submissions**, then **Import for review**. The operator copies validated candidate bytes into private root-owned storage. Changes to an agent-owned proposal afterwards cannot alter this review; import of the same workspace returns the original snapshot, not a replacement. Create a new workspace to revise an already imported proposal.
-6. Inspect the exact diff, identity, project, expiry and snapshot hash. Choose **Approve snapshot** or **Reject**. Approval alone writes no production files. Truncated diffs cannot be approved: split a large change into smaller reviews. This is independent operator authority, unlike an agent-generated controlled token.
-7. Choose **Apply to production** separately. Guardian rechecks the approved hash, active agent identity, expiry, roots, filesystem protection and live baseline. Changed source, revocation or expired access refuses execution. Existing files receive private unique backups. An apply is single-use and is durably claimed before writing; interrupted work becomes **uncertain** and cannot be automatically replayed. Inspect live files/backups before preparing another review.
+6. Inspect the exact diff, per-file CREATE/UPDATE/DELETE/UNCHANGED actions, identity, project, expiry and snapshot hash. Choose **Approve snapshot** or **Reject**. Approval alone writes no production files. Truncated diffs or changed line regions over the review work budget cannot be approved: split the change into smaller reviews. Small edits near the end of a large file retain correct diff line numbers. This is independent operator authority, unlike an agent-generated controlled token.
+7. Choose **Apply to production** separately. Guardian rechecks the approved hash, active agent identity, expiry, roots, filesystem protection and live baseline. Changed source, a newly occupied creation target, revocation or expired access refuses execution. Updated and deleted files receive private unique backups. New files are published without overwriting another file, owned by the root operator with non-executable **0644** permissions; no permissions/owner customization is accepted. Unchanged selected files are not rewritten. An apply is single-use and durably claimed before writing; interrupted work becomes **uncertain** and cannot be automatically replayed. Inspect live files/backups before preparing another review. Deletion backups retain bytes, not an automatic owner/mode/service-aware restore workflow.
 
-**Bounds and storage:** up to three existing UTF-8 files, 100 KB each, 300 KB staged text and 2,000 newline characters per file; host/user limits can reduce these ceilings. No workspace work starts below 96 MiB available memory. Reads default to 12 KB and cap at 24 KB; line-edit replacement text caps at 24 KB. Eight private workspaces per worker, 32 root review records, and a 24-hour lifetime measured from workspace creation. Root operations are serialized. No new files, deletions, command execution, syntax/test execution, service restarts or automated deployment are included. Applying several files is **not atomic across files**; a partial or uncertain result never claims rollback.
+**Bounds and storage:** up to **16 UTF-8 files**, **512,000 bytes per file**, **1,000,000 bytes each of original/candidate text** and 10,000 lines per file. Separate Mission file/count/aggregate settings are displayed in **Limits**; user settings and host guards can reduce these ceilings. A constrained host (under 512 MiB available memory or one logical CPU) caps these at four files / 128,000 bytes per file / 256,000 aggregate bytes; under 256 MiB available memory the caps are two / 64,000 / 128,000. Small VPS requests two / 64,000 / 128,000. Existing custom settings migrate using their previous patch/read budgets, not the expanded defaults. Operator and Gateway accounts still have separate settings; changing root's Limits does not configure a worker's private settings.
+
+No workspace work starts below 96 MiB available memory. Byte reads default to 12 KB and cap at 24 KB. Line reads default to 80 lines, cap at 200 lines / 24 KB, and return a continuation line; exceptionally long lines require byte reads. Line-edit replacement text caps at 24 KB. Review output caps at 48,000 UTF-8 bytes, and matching receives at most 2,000 lines after trimming identical edges; exceeding either budget prevents approval. Eight private workspaces per worker, 32 root review records, and a 24-hour lifetime measured from workspace creation. Root operations are serialized. No new directories, binary files, command execution, syntax/test execution, service restarts or automated deployment are included. Applying several files is **not atomic across files**; a partial or uncertain result never claims rollback.
 
 Worker payloads live under its `.local/share/vps-guardian-missions/`; snapshots live in root-only `/etc/vps-guardian/gateway/reviews/` (`0700`, records `0600`). Workspace creation prunes expired worker records. **Refresh reviews** prunes expired root records except uncertain ones, which require manual inspection/archive by an administrator. Backups are not automatically deleted; archive them separately when appropriate. No always-on worker or additional port is needed.
 
@@ -122,7 +125,7 @@ In **Limits**, choose **Auto**, **Small VPS**, **Standard** or **Custom**, then 
 
 The table distinguishes **Requested** values from **Effective on VPS** values. Orange effective values have been reduced by host protection. The applied settings, not an unsaved draft, determine effective limits. Available memory below 512 MiB or one logical CPU reduces several budgets; below 384 MiB capsules are disabled; below 256 MiB additional critical-load restrictions apply. These are cooperative per-operation budgets, **not a global CPU/RAM quota or OS sandbox**. They do not cancel already running work. Every upgraded process under the same SSH user reads shared settings for subsequent operations. Invalid/unsafe limits use conservative Small VPS defaults and show an error; unsafe ownership/permissions or links may need manual repair.
 
-Editable budgets cover project-file reads (up to 300,000 bytes when host guards permit), MCP tool/resource JSON, HTTP diagnostic bodies, directory entries, journal lines, code-search file/input budgets, project-patch file/staged-text budgets, configuration ChangeSet file/text budgets, Agent Job check concurrency (0 disables checks) and Test Capsules (0 disables, 1 permits). Existing stricter operation-specific bounds still apply. Capsule RAM/CPU/timeout/output bounds remain fixed, not editable. Resource response limits apply to each JSON document; MCP transport encoding and text/structured duplication add overhead. Large fields are omitted with `response_truncated` and `omitted_fields`, retaining small status/IDs/tokens where possible. **A mutation has already returned: do not repeat it just to obtain omitted output.** Request a narrower read or status instead.
+Editable budgets cover project-file reads (up to 300,000 bytes when host guards permit), MCP tool/resource JSON, HTTP diagnostic bodies, directory entries, journal lines, code-search file/input budgets, project-patch file/staged-text budgets, Mission workspace file/count/aggregate budgets, configuration ChangeSet file/text budgets, Agent Job check concurrency (0 disables checks) and Test Capsules (0 disables, 1 permits). Existing stricter operation-specific bounds still apply. Capsule RAM/CPU/timeout/output bounds remain fixed, not editable. Resource response limits apply to each JSON document; MCP transport encoding and text/structured duplication add overhead. Large fields are omitted with `response_truncated` and `omitted_fields`, retaining small status/IDs/tokens where possible. **A mutation has already returned: do not repeat it just to obtain omitted output.** Request a narrower read or status instead.
 
 Cached project patches recheck current roots and resource limits before preview, staging, testing and applying. A revoked or over-budget candidate must be replaced with an allowed, smaller patch. Configuration ChangeSets also recheck live limits before applying.
 
@@ -153,7 +156,7 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.34.1
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.35.0
 ```
 
 For development from source instead:
@@ -197,7 +200,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.34.1",
+        "@murzirius/vps-guardian-mcp@0.35.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -226,7 +229,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.34.1
+@murzirius/vps-guardian-mcp@0.35.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -246,7 +249,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.34.1 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.35.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.

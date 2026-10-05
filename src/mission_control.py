@@ -2,7 +2,7 @@
 
 No code is executed. Agent-owned proposals are untrusted inputs: the operator
 copies validated bytes into private root-owned records before approving them.
-Only existing, root-protected text files are supported in this first version.
+Existing and new source files require root-protected production parents.
 """
 from __future__ import annotations
 
@@ -24,14 +24,15 @@ from src import gateway
 from src.code_navigator import _allowed
 from src.files import _redact_config_text
 from src.resource_policy import get_runtime_budget
-from src.safe_io import atomic_replace, open_regular_fd, private_directory, read_bounded
+from src.safe_io import atomic_create, atomic_replace, backed_up_delete, open_regular_fd, private_directory
 
 WORKSPACE_ID = re.compile(r"ws_[0-9a-f]{24}\Z")
 REVIEW_ID = re.compile(r"review_[0-9a-f]{24}\Z")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
-MAX_FILES = 3
-MAX_FILE_BYTES = 100_000
-MAX_RECORD_BYTES = 1_900_000  # JSON escaping of three source/candidate pairs.
+MAX_FILES = 16
+MAX_FILE_BYTES = 512_000
+MAX_TOTAL_BYTES = 1_000_000
+MAX_RECORD_BYTES = 4_300_000  # Two 1 MB text sets; allowed characters escape at most 2x.
 MAX_WORKSPACES = 8
 MAX_REVIEWS = 32
 MAX_DIFF = 48_000
@@ -56,7 +57,7 @@ def _budget():
     if budget["available_memory_bytes"] < 96 * 1024 * 1024:
         raise ValueError("Not enough available memory for a workspace.")
     limits = budget["limits"]
-    return min(MAX_FILES, limits["project_patch_files"]), min(MAX_FILE_BYTES, limits["project_read_bytes"]), min(300_000, limits["project_patch_bytes"])
+    return min(MAX_FILES, limits["mission_files"]), min(MAX_FILE_BYTES, limits["mission_file_bytes"]), min(MAX_TOTAL_BYTES, limits["mission_total_bytes"])
 
 
 def _worker_policy():
@@ -157,6 +158,7 @@ def _project(policy, value):
 
 def _relative(relative):
     if (not isinstance(relative, str) or len(relative) > 512 or "\\" in relative
+            or any(ord(c) < 32 or ord(c) == 127 for c in relative)
             or not _allowed(relative) or any(part in {".", ".."} for part in relative.split("/"))):
         raise ValueError("Choose a non-hidden, non-sensitive relative path.")
     return relative
@@ -181,9 +183,27 @@ def _target(policy, project, relative):
     return path, _text(raw.decode("utf-8"))
 
 
+def _absent(policy, project, relative):
+    path = _project(policy, str(project)) / _relative(relative)
+    gateway._trusted_directory(path.parent)
+    if os.path.lexists(path):
+        raise ValueError("New file target already exists, including links.")
+    return path
+
+
+def _baseline(policy, project, file):
+    if file["baseline_sha256"] is None:
+        _absent(policy, project, file["relative_path"])
+        return None
+    _, source = _target(policy, project, file["relative_path"])
+    if _hash(source) != file["baseline_sha256"]:
+        raise ValueError("Production baseline changed.")
+    return source
+
+
 def _text(value):
     if (not isinstance(value, str) or len(value.encode("utf-8")) > _budget()[1]
-            or value.count("\n") > 2000 or any(ord(c) < 32 and c not in "\n\r\t" or ord(c) == 127 for c in value)):
+            or len(value.splitlines()) > 10000 or any(ord(c) < 32 and c not in "\n\r\t" or ord(c) == 127 for c in value)):
         raise ValueError("Bounded UTF-8 text required.")
     if _redact_config_text(value)[1]:
         raise ValueError("Files with recognized inline secrets require separate operator handling.")
@@ -191,13 +211,25 @@ def _text(value):
 
 
 def _hash(value):
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return None if value is None else hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _summary(item):
+def _action(file):
+    if file["baseline_sha256"] is None:
+        return "create"
+    if file["candidate"] is None:
+        return "delete"
+    return "unchanged" if _hash(file["candidate"]) == file["baseline_sha256"] else "update"
+
+
+def _summary(item, *, include_files=True):
     result = {key: item[key] for key in ("workspace_id", "agent_id", "project_path", "title", "state", "created_at", "expires_at")}
-    result["files"] = [{"relative_path": f["relative_path"], "baseline_sha256": f["baseline_sha256"],
-                        "candidate_sha256": _hash(f["candidate"])} for f in item["files"]]
+    result["file_count"] = len(item["files"])
+    result["actions"] = {action: sum(_action(f) == action for f in item["files"]) for action in ("create", "update", "delete", "unchanged")}
+    if include_files:
+        result["files"] = [{"relative_path": f["relative_path"], "baseline_sha256": f["baseline_sha256"],
+                            "candidate_sha256": _hash(f["candidate"]), "action": _action(f),
+                            "candidate_bytes": len((f["candidate"] or "").encode("utf-8"))} for f in item["files"]]
     if "review_id" in item:
         result.update(review_id=item["review_id"], digest=item["digest"], result=item.get("result"))
     return result
@@ -219,22 +251,26 @@ def _validate_workspace(value, policy, workspace_id, *, check_baseline=True):
     project = _project(policy, value["project_path"])
     files = value.get("files")
     count, _, byte_limit = _budget()
-    if not isinstance(files, list) or not 1 <= len(files) <= count:
+    if not isinstance(files, list) or not 0 <= len(files) <= count:
         raise ValueError("File count exceeded.")
-    seen, total = set(), 0
+    seen, total, source_total = set(), 0, 0
     for file in files:
         relative = _relative(file["relative_path"])
         baseline = file.get("baseline_sha256")
-        if relative in seen or not isinstance(baseline, str) or not DIGEST.fullmatch(baseline):
+        if (relative in seen or "baseline_sha256" not in file
+                or baseline is not None and (not isinstance(baseline, str) or not DIGEST.fullmatch(baseline))
+                or baseline is None and file.get("candidate") is None):
             raise ValueError("Invalid baseline or duplicate file.")
         # Reading an already copied candidate is not production authorization.
         # Stage/import/approval/apply still require a fresh, protected baseline.
-        if check_baseline and baseline != _hash(_target(policy, project, relative)[1]):
-            raise ValueError("Production changed or duplicate file.")
+        if check_baseline:
+            source = _baseline(policy, project, file)
+            source_total += len((source or "").encode("utf-8"))
         seen.add(relative)
-        _text(file["candidate"])
-        total += len(file["candidate"].encode("utf-8"))
-    if total > byte_limit:
+        if file["candidate"] is not None:
+            _text(file["candidate"])
+            total += len(file["candidate"].encode("utf-8"))
+    if total > byte_limit or source_total > byte_limit:
         raise ValueError("Candidate byte budget exceeded.")
     return value
 
@@ -250,8 +286,8 @@ def _workspace(directory, workspace_id, policy, *, check_baseline=True):
 def create_mission_workspace(project_path: str, relative_paths: list[str], title: str):
     policy = _worker_policy()
     project = _project(policy, project_path)
-    if not isinstance(relative_paths, list) or not 1 <= len(relative_paths) <= _budget()[0]:
-        raise ValueError("Select one to three files.")
+    if not isinstance(relative_paths, list) or not 0 <= len(relative_paths) <= _budget()[0]:
+        raise ValueError("Select a bounded set of files, or start empty for new files.")
     now = time.time()
     item = {"workspace_id": "ws_" + secrets.token_hex(12), "agent_id": policy["agent_id"], "project_path": str(project),
             "title": title, "state": "draft", "created_at": now, "expires_at": now + TTL, "files": []}
@@ -278,9 +314,11 @@ def read_mission_workspace(workspace_id: str, relative_path: str, byte_offset: i
     with _workspace_lock(policy) as directory:
         item = _workspace(directory, workspace_id, policy, check_baseline=False)
         file = next((f for f in item["files"] if f["relative_path"] == relative_path), None)
-        if file is None:
-            raise ValueError("File is not in this workspace.")
+        if file is None or file["candidate"] is None:
+            raise ValueError("Readable candidate required; deleted files have no candidate.")
         raw = file["candidate"].encode("utf-8")
+        if byte_offset > len(raw):
+            raise ValueError("Offset is outside the candidate.")
         fragment = raw[byte_offset:byte_offset + max_bytes]
         # Interior UTF-8 boundaries must be selected explicitly by the caller.
         raw[byte_offset:].decode("utf-8")  # Reject a start in the middle of a character.
@@ -312,6 +350,8 @@ def submit_mission_workspace(workspace_id: str):
     policy = _worker_policy()
     with _workspace_lock(policy) as directory:
         item = _workspace(directory, workspace_id, policy)
+        if not item["files"] or not any(_action(f) != "unchanged" for f in item["files"]):
+            raise ValueError("Submit a non-empty change.")
         item["state"] = "submitted"
         _write(directory / (workspace_id + ".json"), item)
     return {"status": "ok", "workspace": _summary(item), "note": "Awaiting independent operator review. This is not permission to apply."}
@@ -330,23 +370,106 @@ def list_mission_workspaces():
 def stage_mission_line_edit(workspace_id: str, relative_path: str, start_line: int, end_line: int,
                             replacement: str, expected_sha256: str):
     policy = _worker_policy()
-    if (type(start_line) is not int or type(end_line) is not int or not 1 <= start_line <= end_line
+    if (type(start_line) is not int or type(end_line) is not int or start_line < 1 or end_line < start_line - 1
             or not isinstance(replacement, str) or len(replacement.encode("utf-8")) > 24000):
         raise ValueError("Invalid bounded line edit.")
     with _workspace_lock(policy) as directory:
         item = _workspace(directory, workspace_id, policy)
         file = next((f for f in item["files"] if f["relative_path"] == relative_path), None)
-        if item["state"] != "draft" or file is None:
+        if item["state"] != "draft" or file is None or file["candidate"] is None:
             raise ValueError("Editable workspace file required.")
         if expected_sha256 != _hash(file["candidate"]):
             return {"status": "conflict", "error": "Candidate changed; read it again before editing."}
         lines = file["candidate"].splitlines(keepends=True)
-        if end_line > len(lines):
+        if end_line > len(lines) or start_line > len(lines) + 1:
             raise ValueError("Line range is outside the candidate.")
         file["candidate"] = "".join(lines[:start_line - 1]) + replacement + "".join(lines[end_line:])
         _validate_workspace(item, policy, workspace_id)
         _write(directory / (workspace_id + ".json"), item)
     return {"status": "ok", "workspace": _summary(item)}
+
+
+@_safe_errors
+def add_mission_workspace_files(workspace_id: str, relative_paths: list[str]):
+    """Extend an existing draft with explicitly selected production files."""
+    policy = _worker_policy()
+    if not isinstance(relative_paths, list) or not 1 <= len(relative_paths) <= _budget()[0]:
+        raise ValueError("Select a bounded set of existing files.")
+    with _workspace_lock(policy) as directory:
+        item = _workspace(directory, workspace_id, policy)
+        if item["state"] != "draft":
+            raise ValueError("Submitted workspace is frozen.")
+        for relative in relative_paths:
+            _, source = _target(policy, item["project_path"], relative)
+            item["files"].append({"relative_path": relative, "baseline_sha256": _hash(source), "candidate": source})
+        _validate_workspace(item, policy, workspace_id)
+        _write(directory / (workspace_id + ".json"), item)
+    return {"status": "ok", "workspace": _summary(item)}
+
+
+@_safe_errors
+def stage_mission_new_file(workspace_id: str, relative_path: str, content: str):
+    """Propose a new non-executable file under an existing protected parent."""
+    policy = _worker_policy()
+    _text(content)
+    with _workspace_lock(policy) as directory:
+        item = _workspace(directory, workspace_id, policy)
+        if item["state"] != "draft":
+            raise ValueError("Submitted workspace is frozen.")
+        _absent(policy, item["project_path"], relative_path)
+        item["files"].append({"relative_path": relative_path, "baseline_sha256": None, "candidate": content})
+        _validate_workspace(item, policy, workspace_id)
+        _write(directory / (workspace_id + ".json"), item)
+    return {"status": "ok", "workspace": _summary(item), "note": "New file proposal only; production is unchanged."}
+
+
+@_safe_errors
+def stage_mission_file_deletion(workspace_id: str, relative_path: str, expected_sha256: str):
+    """Propose deleting a selected file; cancelling a new file removes its proposal."""
+    policy = _worker_policy()
+    with _workspace_lock(policy) as directory:
+        item = _workspace(directory, workspace_id, policy)
+        file = next((f for f in item["files"] if f["relative_path"] == relative_path), None)
+        if item["state"] != "draft" or file is None or file["candidate"] is None:
+            raise ValueError("Editable candidate required.")
+        if expected_sha256 != _hash(file["candidate"]):
+            return {"status": "conflict", "error": "Candidate changed; read it again before deleting."}
+        if file["baseline_sha256"] is None:
+            item["files"].remove(file)
+        else:
+            file["candidate"] = None
+        _validate_workspace(item, policy, workspace_id)
+        _write(directory / (workspace_id + ".json"), item)
+    return {"status": "ok", "workspace": _summary(item), "note": "Deletion proposal only; production is unchanged."}
+
+
+@_safe_errors
+def read_mission_workspace_lines(workspace_id: str, relative_path: str, start_line: int = 1, max_lines: int = 80):
+    """Return a small line window and just this file's hash, not the full manifest."""
+    policy = _worker_policy()
+    if type(start_line) is not int or start_line < 1 or type(max_lines) is not int or not 1 <= max_lines <= 200:
+        raise ValueError("Invalid line window.")
+    with _workspace_lock(policy) as directory:
+        item = _workspace(directory, workspace_id, policy, check_baseline=False)
+        file = next((f for f in item["files"] if f["relative_path"] == relative_path), None)
+        if file is None or file["candidate"] is None:
+            raise ValueError("Readable candidate required.")
+        lines = file["candidate"].splitlines(keepends=True)
+        if start_line > max(1, len(lines)):
+            raise ValueError("Line is outside the candidate.")
+        chosen, size = [], 0
+        for line in lines[start_line - 1:start_line - 1 + max_lines]:
+            length = len(line.encode("utf-8"))
+            if size + length > 24000:
+                if not chosen:
+                    raise ValueError("Line exceeds output budget; use byte-range reads.")
+                break
+            chosen.append(line)
+            size += length
+        next_line = start_line + len(chosen)
+        return {"status": "ok", "workspace_id": workspace_id, "relative_path": relative_path,
+                "candidate_sha256": _hash(file["candidate"]), "start_line": start_line, "content": "".join(chosen),
+                "next_line": next_line if next_line <= len(lines) else None, "live_baseline_checked": False}
 
 
 def _review_directory():
@@ -385,15 +508,50 @@ def _review_live(item):
     return policy
 
 
+def _file_diff(file):
+    """Trim equal edges before matching; reject large changed line regions.
+
+    SequenceMatcher can be quadratic. It never receives more than 2,000 lines
+    here, even when an otherwise large source file changes in one small place.
+    """
+    before, after = (file["original"] or "").splitlines(keepends=True), (file["candidate"] or "").splitlines(keepends=True)
+    prefix = 0
+    while prefix < min(len(before), len(after)) and before[prefix] == after[prefix]:
+        prefix += 1
+    suffix = 0
+    while suffix < min(len(before), len(after)) - prefix and before[-1 - suffix] == after[-1 - suffix]:
+        suffix += 1
+    start = max(0, prefix - 3)
+    before = before[start:len(before) - max(0, suffix - 3)]
+    after = after[start:len(after) - max(0, suffix - 3)]
+    if len(before) + len(after) > 2000:
+        return "Changed line region exceeds the review work budget. Split this change.\n", True
+    chunks = []
+    for index, line in enumerate(difflib.unified_diff(before, after, fromfile="/dev/null" if file["original"] is None else file["relative_path"],
+                                                   tofile="/dev/null" if file["candidate"] is None else file["relative_path"])):
+        if line.startswith("@@ "):
+            line = re.sub(r"(?<=[-+])\d+", lambda match: str(int(match.group()) + start), line)
+        elif index >= 2 and not line.endswith(("\n", "\r")):
+            line += "\n\\ No newline at end of file\n"
+        chunks.append(line)
+    return "".join(chunks), False
+
+
 def _review_detail(item):
-    diffs = []
+    chunks, total, truncated = [], 0, False
     for file in item["files"]:
-        diff = "".join(difflib.unified_diff(file["original"].splitlines(keepends=True), file["candidate"].splitlines(keepends=True),
-                                           fromfile=file["relative_path"], tofile=file["relative_path"]))
-        diffs.append(diff)
-    full = "\n".join(diffs)
-    # JSON escaping worst case keeps a full detail under the panel's 256 KB cap.
-    return {"status": "ok", "review": _summary(item), "diff": full[:MAX_DIFF], "diff_truncated": len(full) > MAX_DIFF,
+        if _action(file) == "unchanged":
+            continue
+        diff, work_limited = _file_diff(file)
+        raw = (_action(file).upper() + " " + file["relative_path"] + "\n" + diff + "\n").encode("utf-8")
+        chunks.append(raw[:MAX_DIFF - total].decode("utf-8", errors="ignore"))
+        total += len(raw)
+        truncated |= work_limited or total > MAX_DIFF
+        if total >= MAX_DIFF:
+            truncated = True  # Later files may still contain undisplayed changes.
+            break
+    # Byte-capped output fits the panel budget even after JSON escaping.
+    return {"status": "ok", "review": _summary(item), "diff": "".join(chunks), "diff_truncated": truncated,
             "note": "Source is shown only to the private operator connection. No code or checks are executed."}
 
 
@@ -411,7 +569,7 @@ def list_mission_submissions(agent_id: str):
             continue
         _validate_workspace(item, policy, path.stem, check_baseline=False)
         if item["state"] == "submitted":
-            result.append(_summary(item))
+            result.append(_summary(item, include_files=False))
     return {"status": "ok", "submissions": result, "live_baseline_checked": False}
 
 
@@ -438,7 +596,7 @@ def import_mission_review(agent_id: str, workspace_id: str):
     item.update(review_id="review_" + secrets.token_hex(12), state="pending", uid=policy["uid"],
                 key_fingerprint=policy["key_fingerprint"], project_roots=list(policy["project_roots"]), files=[])
     for file in source["files"]:
-        _, original = _target(policy, item["project_path"], file["relative_path"])
+        original = _baseline(policy, item["project_path"], file)
         item["files"].append({"relative_path": file["relative_path"], "baseline_sha256": _hash(original),
                               "original": original, "candidate": file["candidate"]})
     _review_live(item)
@@ -457,7 +615,7 @@ def list_mission_reviews():
         if item["expires_at"] <= time.time() and item["state"] not in {"uncertain"}:
             path.unlink()  # Root-protected exact expired record; never live work.
             continue
-        result.append(_summary(item))
+        result.append(_summary(item, include_files=False))
     return {"status": "ok", "reviews": result}
 
 
@@ -496,12 +654,20 @@ def apply_mission_review(review_id: str, digest: str):
     written = []
     try:
         for file in item["files"]:
-            target, original = _target(policy, item["project_path"], file["relative_path"])
-            if _hash(original) != file["baseline_sha256"]:
-                raise ValueError("Production changed after review.")
-            backup, _ = atomic_replace(str(target), file["candidate"].encode("utf-8"), backup=True,
-                                       limit=MAX_FILE_BYTES, expected_sha256=file["baseline_sha256"])
-            written.append({"relative_path": file["relative_path"], "backup": backup})
+            action = _action(file)
+            _baseline(policy, item["project_path"], file)
+            target = Path(item["project_path"]) / file["relative_path"]
+            if action == "unchanged":
+                continue
+            if action == "create":
+                atomic_create(str(target), file["candidate"].encode("utf-8"), limit=MAX_FILE_BYTES)
+                backup = None
+            elif action == "delete":
+                backup = backed_up_delete(str(target), file["baseline_sha256"], limit=MAX_FILE_BYTES)
+            else:
+                backup, _ = atomic_replace(str(target), file["candidate"].encode("utf-8"), backup=True,
+                                           limit=MAX_FILE_BYTES, expected_sha256=file["baseline_sha256"])
+            written.append({"relative_path": file["relative_path"], "action": action, "backup": backup})
     except (OSError, ValueError):
         # A write may have succeeded before an fsync or metadata error. Do not
         # guess, retry, or claim an automatic all-or-nothing rollback.

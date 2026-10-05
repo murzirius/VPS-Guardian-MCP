@@ -68,6 +68,19 @@ class TestWorkspaceSettings(unittest.TestCase):
         self.assertEqual(result["limits"]["capsule_concurrency"], 0)
         self.assertEqual(result["limits"]["project_patch_files"], 1)
         self.assertIn("project_read_bytes", result["reduced_limits"])
+        self.assertEqual(result["limits"]["mission_files"], 2)
+        self.assertEqual(result["limits"]["mission_file_bytes"], 64000)
+        self.assertEqual(result["limits"]["mission_total_bytes"], 128000)
+
+    def test_legacy_custom_limits_migrate_without_expanding_old_mission_allowance(self):
+        old = self.custom(project_patch_files=1, project_read_bytes=40000, project_patch_bytes=50000)
+        for key in limits.MISSION_LIMITS:
+            old["limits"].pop(key)
+        result = limits.save_workspace_settings(old, "none")
+        self.assertEqual(result["status"], "ok", result)
+        self.assertEqual(result["runtime"]["limits"]["mission_files"], 1)
+        self.assertEqual(result["runtime"]["limits"]["mission_file_bytes"], 40000)
+        self.assertEqual(result["runtime"]["limits"]["mission_total_bytes"], 50000)
 
     def test_invalid_private_file_falls_back_to_small(self):
         limits.save_workspace_settings({"profile": "standard", "limits": {}}, "none")
