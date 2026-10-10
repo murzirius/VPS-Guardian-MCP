@@ -10,7 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
-## [0.35.0] - 2026-10-05
+## [0.36.0] - 2026-10-10
+
+### Added
+- English Mission task board with explicit assignment to an existing Gateway worker, bounded goals/acceptance criteria, private per-worker feeds, operator-acknowledged progress, handoff, cancellation and revision requests.
+- Immutable workspace/review links, independent fixed Python/JSON/TOML parser checks before linked approval/apply, and fresh live hash/absence verification before operator-only completion. Parser requests are one-file-at-a-time with OS memory/CPU bounds and no project execution.
+- Three compact agent assignment/report tools and access to existing bounded read-only Agent Job steps. Agent reports and Job references remain unverified claims, not proof of success.
+
+### Changed
+- Task cancellation or withdrawal blocks old linked approval; standalone import cannot bypass a claimed workspace's task gates. Applied or uncertain production operations cannot be reset/replayed.
+- Live tasks retain their linked reviews for inspection/verification without extending an expired review's mutation authority. Browser task/review details refresh together; forms clear after successful assignment.
+- Includes the expanded-workspace development changes below. Existing Gateway allowlists stay unchanged; new permissions require enrollment of a new identity.
+
+## [0.35.0 development changes] - 2026-10-05
+
+No package was published for this version; these changes are included in 0.36.0.
 
 ### Added
 - Incrementally extend Mission drafts with selected existing files, propose new source files and hash-checked deletions, and read compact line windows without repeating the full manifest.

@@ -50,6 +50,9 @@ class FakeController:
     def mission_request(self, name, data):
         self.calls.append((name, data))
 
+    def tasks_request(self, name, data):
+        self.calls.append((name, data))
+
 
 class TestPanelHTTP(unittest.TestCase):
     def setUp(self):
@@ -132,6 +135,16 @@ class TestPanelHTTP(unittest.TestCase):
         self.assertEqual(self.controller.calls, [("list_mission_reviews", {})])
         self.assertEqual(self.request("POST", "/api/missions/execute", {}, self.auth())[0], 404)
 
+    def test_task_routes_are_fixed_and_require_same_origin(self):
+        for endpoint in ("create", "list", "inspect", "reassign", "import", "check", "verify", "finish", "cancel", "return"):
+            path = "/api/tasks/" + endpoint
+            self.assertEqual(self.request("POST", path, {}, {**self.auth(), "Authorization": "Bearer wrong"})[0], 401)
+            self.assertEqual(self.request("POST", path, {}, {**self.auth(), "Origin": "https://evil.example"})[0], 403)
+        self.assertFalse(self.controller.calls)
+        self.assertEqual(self.request("POST", "/api/tasks/list", {}, self.auth())[0], 202)
+        self.assertEqual(self.controller.calls, [("list_mission_tasks", {})])
+        self.assertEqual(self.request("POST", "/api/tasks/execute", {}, self.auth())[0], 404)
+
     def test_panel_is_english_and_permissions_are_primary(self):
         html = self.request(path="/")[2].decode()
         self.assertIn('lang="en"', html)
@@ -142,6 +155,7 @@ class TestPanelHTTP(unittest.TestCase):
         self.assertIn('data-section="operations"', html)
         self.assertIn('data-section="gateway"', html)
         self.assertIn('data-section="missions"', html)
+        self.assertIn("Mission task board", html)
         self.assertIn("Effective on VPS", html)
         for path in ("/", "/app.js"):
             self.assertNotRegex(self.request(path=path)[2].decode(), r"[А-Яа-яёЁ]")
@@ -149,6 +163,14 @@ class TestPanelHTTP(unittest.TestCase):
     def test_body_size_and_content_type(self):
         self.assertEqual(self.request("POST", "/api/connect", {"host": "a" * 9000}, self.auth())[0], 400)
         self.assertEqual(self.request("POST", "/api/connect", {}, {**self.auth(), "Content-Type": "text/plain"})[0], 400)
+
+    def test_task_create_accepts_bounded_unicode_metadata_not_source_uploads(self):
+        data = {"agent_id": "review-bot", "project_path": "/srv/example-app", "title": "Unicode goal",
+                "goal": "漢" * 2300, "acceptance_criteria": ["漢" * 300] * 8, "required_checks": ["python_syntax"]}
+        self.assertGreater(len(json.dumps(data)), 8192)
+        self.assertEqual(self.request("POST", "/api/tasks/create", data, self.auth())[0], 202)
+        data["goal"] = "漢" * 6000
+        self.assertEqual(self.request("POST", "/api/tasks/create", data, self.auth())[0], 400)
 
     def test_static_assets_have_csp_and_no_token(self):
         for path in ("/", "/app.js", "/style.css"):

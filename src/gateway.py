@@ -42,6 +42,8 @@ MISSION_TOOLS = DEFAULT_TOOLS + ["search_project_code", "create_mission_workspac
                                  "stage_mission_file", "stage_mission_line_edit", "submit_mission_workspace", "list_mission_workspaces",
                                  "add_mission_workspace_files", "stage_mission_new_file", "stage_mission_file_deletion",
                                  "read_mission_workspace_lines"]
+MISSION_TOOLS += ["list_assigned_missions", "get_mission_brief", "report_mission_progress",
+                  "create_agent_job", "get_agent_job", "list_agent_jobs", "advance_agent_job", "finish_agent_job", "cancel_agent_job"]
 
 
 def _account(agent_id: str) -> str:

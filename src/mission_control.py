@@ -232,6 +232,8 @@ def _summary(item, *, include_files=True):
                             "candidate_bytes": len((f["candidate"] or "").encode("utf-8"))} for f in item["files"]]
     if "review_id" in item:
         result.update(review_id=item["review_id"], digest=item["digest"], result=item.get("result"))
+    if "mission_id" in item:
+        result["mission_id"] = item["mission_id"]
     return result
 
 
@@ -484,6 +486,8 @@ def _review_directory():
 def _review_digest(item):
     bound = {key: item[key] for key in ("review_id", "workspace_id", "agent_id", "uid", "key_fingerprint", "project_roots",
                                       "project_path", "title", "created_at", "expires_at", "files")}
+    if "mission_id" in item:
+        bound["mission_id"] = item["mission_id"]
     return hashlib.sha256(json.dumps(bound, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
@@ -501,6 +505,9 @@ def _review(review_id):
 
 
 def _review_live(item):
+    if "mission_id" in item:
+        from src.mission_tasks import _assert_review_allowed
+        _assert_review_allowed(item)
     policy = _live_policy(item["agent_id"])
     if time.time() >= item["expires_at"] or any(policy[key] != item[key] for key in ("uid", "key_fingerprint", "project_roots")):
         raise ValueError("Review expired or identity/scope changed.")
@@ -551,8 +558,17 @@ def _review_detail(item):
             truncated = True  # Later files may still contain undisplayed changes.
             break
     # Byte-capped output fits the panel budget even after JSON escaping.
-    return {"status": "ok", "review": _summary(item), "diff": "".join(chunks), "diff_truncated": truncated,
-            "note": "Source is shown only to the private operator connection. No code or checks are executed."}
+    result = {"status": "ok", "review": _summary(item), "diff": "".join(chunks), "diff_truncated": truncated,
+              "note": "Source is shown only to the private operator connection. This view executes no code or checks."}
+    if "mission_id" in item:
+        from src.mission_tasks import _task, FINAL
+        task = _task(item["mission_id"])
+        checks = task.get("checks") or {}
+        result["linked_mission"] = {"mission_id": task["mission_id"], "state": task["state"],
+            "eligible": task["state"] not in FINAL and time.time() < task["expires_at"]
+                        and task["review_id"] == item["review_id"] and task["review_digest"] == item["digest"],
+            "checks_passed": checks.get("digest") == item["digest"] and checks.get("complete") is True and checks.get("passed") is True}
+    return result
 
 
 @_safe_errors
@@ -576,6 +592,13 @@ def list_mission_submissions(agent_id: str):
 @_safe_errors
 @gateway._serialized_administration
 def import_mission_review(agent_id: str, workspace_id: str):
+    from src.mission_tasks import _workspace_has_assignment
+    if _workspace_has_assignment(agent_id, workspace_id):
+        return {"status": "error", "error": "This workspace belongs to a mission task. Use Import submitted workspace in that task; standalone import cannot bypass its checks or cancellation."}
+    return _import_review(agent_id, workspace_id)
+
+
+def _import_review(agent_id, workspace_id):
     policy = _live_policy(agent_id)
     item = _workspace(_workspace_directory(policy), workspace_id, policy)
     if item["state"] != "submitted":
@@ -612,7 +635,11 @@ def list_mission_reviews():
     result = []
     for path in _paths(directory, REVIEW_ID, MAX_REVIEWS):
         _, item = _review(path.stem)
-        if item["expires_at"] <= time.time() and item["state"] not in {"uncertain"}:
+        retain = False
+        if "mission_id" in item:
+            from src.mission_tasks import _retain_linked_review
+            retain = _retain_linked_review(item)
+        if item["expires_at"] <= time.time() and item["state"] not in {"uncertain"} and not retain:
             path.unlink()  # Root-protected exact expired record; never live work.
             continue
         result.append(_summary(item, include_files=False))
@@ -634,6 +661,9 @@ def decide_mission_review(review_id: str, digest: str, decision: str):
         raise ValueError("Review state or digest changed.")
     if decision == "approve":
         _review_live(item)
+        if "mission_id" in item:
+            from src.mission_tasks import _assert_review_allowed
+            _assert_review_allowed(item, require_checks=True)
         if _review_detail(item)["diff_truncated"]:
             raise ValueError("Split this change: a truncated diff cannot be approved.")
     item["state"] = "approved" if decision == "approve" else "rejected"
@@ -647,6 +677,9 @@ def apply_mission_review(review_id: str, digest: str):
     directory, item = _review(review_id)
     if item["state"] != "approved" or digest != item["digest"]:
         raise ValueError("Independent approval of this exact digest is required.")
+    if "mission_id" in item:
+        from src.mission_tasks import _assert_review_allowed
+        _assert_review_allowed(item, require_checks=True)
     policy = _review_live(item)
     item["state"] = "applying"
     path = directory / (review_id + ".json")

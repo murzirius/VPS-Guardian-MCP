@@ -14,6 +14,8 @@
   let gatewayReloadPending = false;
   let missionReloadPending = false;
   let missionSignature = null;
+  let taskSignature = null, tasksRefreshed = 0, tasksLoading = false, taskReloadPending = false;
+  let pendingTaskCreation = null;
   const labels = {disconnected:'Disconnected', connecting:'Connecting…', connected:'Connected', disconnecting:'Disconnecting…', error:'Connection error'};
   function notice(message) { $('notice').textContent = message || ''; $('notice').hidden = !message; }
   async function api(path, body) {
@@ -94,7 +96,7 @@
     }
     if (name === 'operations') refreshOperations();
     if (name === 'gateway') refreshGateway();
-    if (name === 'missions') refreshMissions();
+    if (name === 'missions') { refreshTasks(true); missionReloadPending = true; }
   }
   for (const button of document.querySelectorAll('[data-section]')) button.addEventListener('click', () => section(button.dataset.section));
   function textNode(tag, text, className) {
@@ -176,6 +178,7 @@
     renderOperations(data);
     renderGateway(data);
     renderMissions(data);
+    renderTasks(data);
     const connection = data.connection;
     $('connection-status').textContent = labels[connection] || 'Unknown';
     $('connection-status').className = 'status ' + connection;
@@ -332,7 +335,7 @@
   });
   async function missionRequest(path, body, reload = false) {
     if (state?.connection !== 'connected' || !state.mission_supported || state.policy_busy) return;
-    try { missionReloadPending = reload; render(await api('missions/' + path, body)); }
+    try { missionReloadPending = reload; if (reload) taskReloadPending = true; render(await api('missions/' + path, body)); }
     catch (error) { notice(error.message); }
   }
   async function refreshMissions() { await missionRequest('list', {}); }
@@ -372,21 +375,124 @@
     const diff = textNode('pre', data.mission_review.diff || 'No content changes.', 'mission-diff'); diff.tabIndex = 0; detail.append(diff);
     if (data.mission_review.diff_truncated) detail.append(textNode('p', 'Diff exceeds the display or comparison budget. Split the change; this snapshot cannot be approved.', 'boundary-note'));
     if (item.state === 'uncertain') detail.append(textNode('p', 'A write may have started. Inspect production and backups. Apply is disabled; never replay this review.', 'notice'));
+    const linked = data.mission_review.linked_mission;
+    const taskAllowsApply = !linked || linked.eligible && linked.checks_passed;
+    if (linked) detail.append(textNode('p', 'Linked mission: ' + linked.state.replaceAll('_',' ') + (taskAllowsApply ? ' · selected snapshot checks passed' : ' · approval/apply blocked: refresh the task and complete its checks, or inspect cancellation/expiry'), 'boundary-note'));
     const actions = document.createElement('div'); actions.className = 'policy-actions';
     function action(label, path, body, warning, primary = false) {
       const button = textNode('button', label, primary ? 'primary' : 'refresh'); button.type = 'button'; button.disabled = !available || primary && expired;
       button.addEventListener('click', () => { if (confirm(warning)) missionRequest(path, body, true); }); actions.append(button);
     }
     if (item.state === 'pending') {
-      if (!data.mission_review.diff_truncated) action('Approve snapshot', 'decide', {review_id:item.review_id, digest:item.digest, decision:'approve'}, 'Approve exactly the displayed snapshot? This does not apply it yet.', true);
+      if (!data.mission_review.diff_truncated && taskAllowsApply) action('Approve snapshot', 'decide', {review_id:item.review_id, digest:item.digest, decision:'approve'}, 'Approve exactly the displayed snapshot? This does not apply it yet.', true);
       action('Reject', 'decide', {review_id:item.review_id, digest:item.digest, decision:'reject'}, 'Reject this snapshot? It cannot be applied later.');
     }
-    if (item.state === 'approved') action('Apply to production', 'apply', {review_id:item.review_id, digest:item.digest}, 'Apply the displayed updates, creations and deletions to production? Updated and deleted files are backed up. New files are non-executable 0644. Multiple files are not an atomic transaction; interrupted work is never replayed.', true);
+    if (item.state === 'approved' && taskAllowsApply) action('Apply to production', 'apply', {review_id:item.review_id, digest:item.digest}, 'Apply the displayed updates, creations and deletions to production? Updated and deleted files are backed up. New files are non-executable 0644. Multiple files are not an atomic transaction; interrupted work is never replayed.', true);
     detail.append(actions);
     for (const file of item.result?.written || []) detail.append(textNode('p', file.relative_path + ' · ' + (file.action || 'update') + ' · ' + (file.backup ? 'backup: ' + file.backup : 'new file: no previous version'), 'field-help'));
   }
   $('reload-missions').addEventListener('click', refreshMissions);
   $('mission-submissions-form').addEventListener('submit', event => { event.preventDefault(); missionRequest('submissions', {agent_id:$('mission-agent').value.trim()}); });
+  async function taskRequest(path, body, changed = false) {
+    if (state?.connection !== 'connected' || !state.mission_tasks_supported || state.policy_busy) return;
+    if (path === 'create') pendingTaskCreation = {previous:state.mission_task?.mission?.mission_id};
+    try { render(await api('tasks/' + path, body)); if (changed) taskReloadPending = true; }
+    catch (error) { pendingTaskCreation = null; notice(error.message); }
+  }
+  async function refreshTasks(force = false) {
+    if (tasksLoading || !state?.mission_tasks_supported || state.connection !== 'connected' || state.policy_busy || !force && Date.now() - tasksRefreshed < 30000) return;
+    tasksLoading = true;
+    try { await taskRequest('list', {}); tasksRefreshed = Date.now(); }
+    finally { tasksLoading = false; }
+  }
+  function renderTasks(data) {
+    const available = data.connection === 'connected' && data.mission_tasks_supported && !data.policy_busy;
+    for (const id of ['reload-tasks','create-task','task-agent','task-project','task-title','task-goal','task-criteria','task-check-options']) $(id).disabled = !available;
+    $('tasks-message').textContent = data.mission_tasks_error || (data.connection === 'connected' && !data.mission_tasks_supported ? 'Upgrade Guardian on your computer and VPS to 0.36.0+ for mission tasks.' : '');
+    $('tasks-message').hidden = !$('tasks-message').textContent;
+    if (pendingTaskCreation && !data.policy_busy) {
+      if (data.mission_tasks_error) pendingTaskCreation = null;
+      else if (data.mission_task?.mission?.mission_id && data.mission_task.mission.mission_id !== pendingTaskCreation.previous) {
+        for (const id of ['task-title','task-goal','task-criteria']) $(id).value = '';
+        $('new-task').open = false;
+        pendingTaskCreation = null;
+      }
+    }
+    const signature = JSON.stringify([available, data.mission_tasks, data.mission_task, data.mission_tasks_error]);
+    if (signature === taskSignature) return;
+    taskSignature = signature;
+    const board = $('task-board'); board.replaceChildren();
+    const lanes = [['Queued',['queued']], ['Working',['working','blocked']], ['Review',['needs_review','ready_to_apply']], ['Results',['verifying','needs_attention','done','cancelled','expired']]];
+    for (const [name, states] of lanes) {
+      const lane = document.createElement('div'); lane.className = 'mission-lane';
+      const items = (data.mission_tasks?.missions || []).filter(item => states.includes(item.state));
+      lane.append(textNode('h4', name + ' · ' + items.length));
+      for (const item of items) {
+        const card = document.createElement('button'); card.type = 'button'; card.className = 'mission-card'; card.disabled = !available;
+        card.append(textNode('strong', item.title), textNode('small', item.agent_id, 'muted'), textNode('span', item.state.replaceAll('_',' '), 'small-tag'));
+        card.addEventListener('click', () => taskRequest('inspect', {mission_id:item.mission_id})); lane.append(card);
+      }
+      if (!items.length) lane.append(textNode('p', 'No missions', 'muted small'));
+      board.append(lane);
+    }
+    const detail = $('task-detail'); detail.replaceChildren();
+    const item = data.mission_task?.mission;
+    if (!item) { detail.append(textNode('p', 'Choose a mission to see its goal, evidence and next action.', 'muted small')); return; }
+    detail.append(textNode('h3', item.title), textNode('p', item.agent_id + ' · ' + item.project_path, 'muted small'), textNode('p', item.goal, 'mission-goal'));
+    for (const [label, value] of [['State',item.state.replaceAll('_',' ')], ['Revision',String(item.revision)], ['Mission ID',item.mission_id], ['Expires',new Date(item.expires_at * 1000).toLocaleString('en-GB')]]) {
+      const row = document.createElement('div'); row.className = 'metadata-row'; row.append(textNode('span', label), textNode('strong', value)); detail.append(row);
+    }
+    detail.append(textNode('h4', 'Acceptance criteria — operator confirmation required'));
+    const criteria = document.createElement('ul');
+    for (const criterion of item.acceptance_criteria || []) criteria.append(textNode('li', criterion)); detail.append(criteria);
+    if (item.agent_report) detail.append(textNode('h4', 'Agent report — unverified'), textNode('p', item.agent_report, 'mission-goal'));
+    if (item.report_error) detail.append(textNode('p', item.report_error, 'notice'));
+    if (item.reported_job_id) detail.append(textNode('p', 'Reported Agent Job: ' + item.reported_job_id + ' · not independently verified', 'field-help'));
+    detail.append(textNode('h4', 'Independent evidence'));
+    if (!item.checks) detail.append(textNode('p', 'Snapshot checks have not run. Approval is blocked for linked snapshots.', 'field-help'));
+    else {
+      detail.append(textNode('p', item.checks.passed ? 'Selected snapshot checks passed.' : item.checks.complete ? 'A snapshot check failed. Correct the proposal or retry after resolving the stated resource/parser issue.' : 'More snapshot files need checking.', 'field-help'));
+      if (!item.checks.results?.length) detail.append(textNode('p', 'No selected formats matched; no syntax checks were performed.', 'field-help'));
+      for (const check of item.checks.results || []) detail.append(textNode('p', check.relative_path + ' · ' + check.check + ' · ' + (check.passed ? 'passed' : check.error || 'failed'), 'field-help'));
+    }
+    if (item.verification) detail.append(textNode('p', item.verification.passed ? 'Live file hashes match the bound snapshot.' : 'Live file verification failed. Inspect production; nothing is rolled back or replayed.', item.verification.passed ? 'field-help' : 'notice'));
+    detail.append(textNode('p', 'Syntax and file hashes do not prove that services, tests or payments work. Inspect the acceptance criteria before finishing.', 'boundary-note'));
+    const actions = document.createElement('div'); actions.className = 'policy-actions';
+    const body = {mission_id:item.mission_id, expected_revision:item.revision};
+    function action(label, path, warning, extra = {}) {
+      const button = textNode('button', label, 'refresh'); button.type = 'button'; button.disabled = !available;
+      button.addEventListener('click', () => { if (!warning || confirm(warning)) taskRequest(path, {...body,...extra}, true); }); actions.append(button);
+    }
+    if (item.state === 'needs_review' && !item.review_id && item.workspace_id) action('Import submitted workspace', 'import', 'Import the submitted bytes into a private operator snapshot? This does not approve or apply them.');
+    if (item.review_id) {
+      const open = textNode('button', 'Open exact review', 'refresh'); open.type = 'button'; open.disabled = !available;
+      open.addEventListener('click', () => { missionRequest('inspect', {review_id:item.review_id}); $('mission-detail').scrollIntoView({behavior:'smooth',block:'start'}); }); actions.append(open);
+      if (['pending','approved'].includes(item.review_state) && !item.checks?.passed && !['done','cancelled','expired'].includes(item.state)) action('Run next snapshot check', 'check', null);
+      if (['pending','approved','rejected'].includes(item.review_state) && !['cancelled','expired','done'].includes(item.state)) action('Return for revisions', 'return', 'Withdraw this exact review and any approval? The agent must create a new workspace; old approval cannot be reused.');
+    }
+    if (item.state === 'verifying') {
+      action('Verify live files', 'verify', null);
+      if (item.verification?.passed) action('Confirm acceptance and finish', 'finish', 'Have you independently checked every acceptance criterion? Guardian will recheck live file hashes, but cannot prove application behavior.');
+    }
+    if (!['done','cancelled','expired'].includes(item.state) && !['completed','uncertain'].includes(item.review_state)) {
+      action('Cancel mission', 'cancel', 'Cancel this mission and block future linked approval/apply? This does not roll back production or stop work already running.');
+      if (!item.review_id) {
+        const handoff = textNode('button', 'Hand off', 'refresh'); handoff.type = 'button'; handoff.disabled = !available;
+        handoff.addEventListener('click', () => { const agent = prompt('Existing Mission worker name. Private files and approval will not be transferred.'); if (agent) taskRequest('reassign', {...body,agent_id:agent.trim()}, true); }); actions.append(handoff);
+      }
+    }
+    const timeline = document.createElement('details'); timeline.append(textNode('summary', 'Timeline · ' + (item.events || []).length));
+    for (const event of (item.events || []).slice().reverse()) timeline.append(textNode('p', new Date(event.at * 1000).toLocaleString('en-GB') + ' · ' + event.kind.replaceAll('_',' ') + ' · ' + event.summary, 'field-help'));
+    detail.append(actions, timeline);
+  }
+  $('reload-tasks').addEventListener('click', () => refreshTasks(true));
+  $('task-create-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const criteria = $('task-criteria').value.split('\n').map(value => value.trim()).filter(Boolean);
+    if (!criteria.length || criteria.length > 8 || criteria.some(value => value.length > 300)) { notice('Use 1–8 acceptance criteria, at most 300 characters each.'); return; }
+    taskRequest('create', {agent_id:$('task-agent').value.trim(), project_path:$('task-project').value.trim(), title:$('task-title').value.trim(), goal:$('task-goal').value.trim(), acceptance_criteria:criteria,
+      required_checks:[...$('task-check-options').querySelectorAll('input:checked')].map(input => input.value)}, true);
+  });
   const finishedStates = new Set(['completed','failed','rolled_back','expired','cancelled','uncertain']);
   function renderOperations(data) {
     if (data.connection !== 'connected') operationsRefreshed = 0;
@@ -450,6 +556,7 @@
     clearTimeout(updateTimer);
     if (!token) { notice('Open the full private link printed when the panel starts. After reloading, you will need that link again.'); $('connect').disabled = true; return; }
     try { render(await api('status')); if (!$('section-operations').hidden) refreshOperations();
+      if (!$('section-missions').hidden && !missionReloadPending) refreshTasks();
       if (gatewayReloadPending && state?.connection === 'connected' && !state.policy_busy) {
         gatewayReloadPending = false;
         if (!state.gateway_error) refreshGateway();
@@ -457,6 +564,11 @@
       if (missionReloadPending && state?.connection === 'connected' && !state.policy_busy) {
         missionReloadPending = false;
         if (!state.mission_error) refreshMissions();
+      }
+      if (taskReloadPending && state?.connection === 'connected' && !state.policy_busy) {
+        taskReloadPending = false;
+        refreshTasks(true);
+        missionReloadPending = true;
       }
     }
     catch (error) { notice(error.name === 'TimeoutError' || error.name === 'TypeError' ? 'The local panel is not responding. Check that its process is still running.' : error.message); }

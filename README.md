@@ -34,14 +34,14 @@ The English-language panel runs **on your computer, not on the VPS or this proje
 With [uv](https://docs.astral.sh/uv/) installed on your computer:
 
 ```bash
-uvx --from vps-guardian-mcp==0.35.0 vps-guardian-panel
+uvx --from vps-guardian-mcp==0.36.0 vps-guardian-panel
 ```
 
 Without uv, install in a local virtual environment. Windows PowerShell:
 
 ```powershell
 py -m venv .guardian-panel
-.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.35.0
+.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.36.0
 .\.guardian-panel\Scripts\python.exe -m src.local_panel
 ```
 
@@ -49,7 +49,7 @@ Linux/macOS:
 
 ```bash
 python3 -m venv .guardian-panel
-.guardian-panel/bin/pip install vps-guardian-mcp==0.35.0
+.guardian-panel/bin/pip install vps-guardian-mcp==0.36.0
 .guardian-panel/bin/vps-guardian-panel
 ```
 
@@ -58,7 +58,7 @@ The browser opens automatically. Enter the VPS address, SSH user, port and **pat
 To upgrade an existing pip installation on the VPS:
 
 ```bash
-/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.35.0
+/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.36.0
 ```
 
 Upgrade any other Guardian environments used by your agents, then reconnect **all agents once** so they start the policy-aware server. Subsequent permission changes affect new calls in those sessions without a restart. In-flight operations are not cancelled, and cached client tool lists may still show disabled tools; calls to those tools are rejected.
@@ -92,11 +92,29 @@ Atomic project writes preserve the original file's owner/group. Directory write 
 
 **Revoke** immediately blocks new normal MCP calls and removes that account's key for new SSH logins. It does not cancel an already-running operation or delete the Unix account and its private work/history; inspect those separately if needed. Expiration similarly denies later tool calls and future Gateway starts. `get_safety_status` remains available for recovery metadata. If an agent also possesses another independent SSH credential, Gateway cannot constrain that credential. There is no public HTTP endpoint or general shell tool. Independent approval is available only through the separate Mission worker workflow; it does not change Project editor tokens.
 
-#### Mission Control: private proposals and operator approval
+#### Mission Control: assigned tasks and independent evidence
 
-Requires **Linux and Guardian 0.35.0+ on the VPS and your computer** for the expanded workspace tools, a dedicated **Mission worker** Gateway account, and a separate administrator key for the local panel. This is a bounded file-review workflow for **one connected VPS**, not an autonomous AI, general task scheduler or full filesystem/container sandbox. The external agent prepares changes; Guardian never starts an LLM or executes candidate code.
+Requires **Guardian 0.36.0+ on the VPS and your computer**, Linux, a newly enrolled **Mission worker** identity and a separate root operator connection. The English panel runs locally. Guardian does **not** start an LLM, dispatch prompts to an AI provider or execute arbitrary project commands. You must connect an external agent and ask it to inspect its assignments. Upgrading never silently expands an existing worker's tool allowlist.
 
-1. Upgrade both Python installations and reconnect. In **Gateway**, enroll a new agent with **Mission worker** permissions and narrowly scoped existing project directories. Do not reuse the administrator key in its MCP client. Existing Editor accounts retain their old behavior. Previously enrolled Mission workers keep their exact allowlists; upgrading does not silently grant the four additional tools. Enroll a new worker with a new name/key to use them, and revoke the old identity when its work is finished.
+1. Upgrade both Python installations, enroll a new Mission worker in **Gateway**, and scope it to a suitable **root-protected project** (requirements below). Give the AI client only that worker's separate SSH key. Never share the operator key, worker Unix group, sudo or Docker access.
+2. Open **Mission Control → New mission**. Enter the existing worker name, project directory, goal and 1–8 acceptance criteria. Choose fixed Python/JSON/TOML syntax checks. Selecting a check affects matching files only; unsupported formats are not covered. The assignment is private metadata, not a grant of production-write access.
+3. Ask the agent to use `list_assigned_missions` and `get_mission_brief`. It can prepare a private workspace and send a short progress report. Reports permit only **working**, **blocked** or **needs review**; the last phase requires a submitted workspace for the assigned project. Existing bounded Agent Jobs can collect read-only diagnostics; a reported Job ID is explicitly **not independently verified**.
+4. Click **Refresh tasks** to acknowledge reports. While Mission Control is visible, the panel performs bounded metadata refreshes at most once every 30 seconds. With the operator panel closed, reports remain unacknowledged; there is no privileged background broker. The board distinguishes Queued, Working, Review and Results. **Hand off** reassigns only an unreviewed mission to another active, in-scope worker. Private source copies and approval are never transferred, and old reports are invalidated. Revoke the old identity separately if it must lose all future access.
+5. Select the task and choose **Import submitted workspace**. The root operator takes an immutable snapshot. A workspace claimed by a task cannot be imported through the standalone review flow to bypass task checks. Choose **Run next snapshot check** until all selected matching files pass. Each request checks one file in a fresh fixed parser process: Python AST, strict JSON or TOML parsing, never candidate execution/imports. Linux and at least 192 MiB available memory are required for a parser; it has a 128 MiB address-space cap, two CPU seconds and a three-second wall timeout. TOML parsing requires the server's Python 3.11+. There is no arbitrary shell or host-execution fallback.
+6. Choose **Open exact review**, inspect every file and diff, then independently **Approve snapshot** and **Apply to production**. These are separate actions. Approval/apply is blocked until the exact digest's checks pass. **Return for revisions** explicitly withdraws even an approved but unapplied review; the agent must create a new workspace. **Cancel mission** blocks later linked approval/apply, but is not rollback or cancellation of in-flight work. Applied or uncertain work cannot be reset or replayed through these actions.
+7. After application, use **Verify live files**. Guardian checks every expected file hash or deletion against the bound snapshot. Then inspect the acceptance criteria yourself and choose **Confirm acceptance and finish**. Completion performs another fresh hash check. The agent cannot mark the mission done. Hashes and syntax checks do **not** prove that application behavior, tests, services or payment processing work.
+
+**Recovery and token use:** revisions reject stale operator requests; `get_mission_brief(after_revision=...)` returns a tiny unchanged reply, otherwise just the current goal/state, linked IDs and evidence summary rather than an entire timeline. Interrupted production writes remain uncertain and are never automatically replayed. Tasks stay independent of the AI's chat history; they do not copy or publish that chat.
+
+**Private storage and bounds:** root ledger `/etc/vps-guardian/gateway/tasks/` is `0700`, records `0600`; per-worker assignment directories are root-owned `0750` with `0640` files readable only by that worker's private Unix group and root. The worker cannot modify these assignments. Its untrusted reports live in its own private `.local/share/vps-guardian-mission-progress/`. At most 64 task records, eight active assignments per identity, 96 KB per metadata record and 32 short timeline entries. Completed records count toward the fixed capacity; archive them privately through an administrator's maintenance workflow before reaching the ceiling. Guardian never deletes tasks or silently grows storage. Lifetime is at most seven days and never exceeds the assigned identity's expiry. Root operations serialize enrollment, revocation, task transitions and production review. A failed assignment export can be repaired by Refresh without repeating production work. Secret redaction is best-effort; never put secrets in a goal or report.
+
+Standalone workspaces remain available for direct manual review without task-selected parser checks. Only a **linked** task gains these additional gates; this does not constrain independent root SSH or other privileged credentials. Mission workers can use bounded read-only Agent Job steps, but cannot execute a recovery restart through that profile.
+
+#### Private workspaces and operator approval
+
+Requires **Linux and Guardian 0.36.0+ on the VPS and your computer** for the expanded workspace tools, a dedicated **Mission worker** Gateway account, and a separate administrator key for the local panel. This is a bounded workflow for **one connected VPS**, not an autonomous AI or full filesystem/container sandbox. The external agent prepares changes; Guardian never starts an LLM or executes candidate code.
+
+1. Upgrade both Python installations and reconnect. In **Gateway**, enroll a new agent with **Mission worker** permissions and narrowly scoped existing project directories. Do not reuse the administrator key in its MCP client. Existing Editor accounts retain their old behavior. Previously enrolled Mission workers keep their exact allowlists; upgrading does not silently grant additional tools. Enroll a new worker with a new name/key to use them, and revoke the old identity when its work is finished.
 2. Select production files the worker can **read but not write**. Every directory component must be root-owned and not group/world writable; existing files must also be root-owned, not group/world writable, single-linked regular files without setuid/setgid bits. Guardian verifies this at creation, import, approval and apply. It never changes project ownership, ACLs or service configuration for you. Agent-owned deployments and writable project ancestors are refused rather than silently weakened; let an administrator review an appropriate root-managed copy if needed. Never grant sudo, Docker access or other privileged credentials to a worker.
 3. Ask the agent to prepare a workspace, for example `create_mission_workspace(project_path="/srv/example-app", relative_paths=["main.py"], title="Improve application message")`. Only selected files are copied into private state; this is not a complete checkout or a recursive scan. A draft can be extended with selected existing files, or start with `relative_paths=[]` for new files only. Reads return bounded fragments and SHA-256 values. A small edit can use `stage_mission_line_edit` with the candidate's current hash; a stale hash returns a conflict rather than overwriting another edit. For insertion use `end_line=start_line-1`, including appending at the line after EOF. Compact line-window reads return just that file's hash rather than the full manifest. Complete-file staging is bounded too.
    New source files must have an **existing root-protected parent** and an absent target; directories are not created. Deletion is a hash-checked proposal for a selected existing file; deleting a newly proposed file merely cancels its creation. Empty files are valid, and their CREATE/DELETE action is explicitly shown even when there are no diff lines. No production files change during any of these draft operations.
@@ -109,7 +127,7 @@ Requires **Linux and Guardian 0.35.0+ on the VPS and your computer** for the exp
 
 No workspace work starts below 96 MiB available memory. Byte reads default to 12 KB and cap at 24 KB. Line reads default to 80 lines, cap at 200 lines / 24 KB, and return a continuation line; exceptionally long lines require byte reads. Line-edit replacement text caps at 24 KB. Review output caps at 48,000 UTF-8 bytes, and matching receives at most 2,000 lines after trimming identical edges; exceeding either budget prevents approval. Eight private workspaces per worker, 32 root review records, and a 24-hour lifetime measured from workspace creation. Root operations are serialized. No new directories, binary files, command execution, syntax/test execution, service restarts or automated deployment are included. Applying several files is **not atomic across files**; a partial or uncertain result never claims rollback.
 
-Worker payloads live under its `.local/share/vps-guardian-missions/`; snapshots live in root-only `/etc/vps-guardian/gateway/reviews/` (`0700`, records `0600`). Workspace creation prunes expired worker records. **Refresh reviews** prunes expired root records except uncertain ones, which require manual inspection/archive by an administrator. Backups are not automatically deleted; archive them separately when appropriate. No always-on worker or additional port is needed.
+Worker payloads live under its `.local/share/vps-guardian-missions/`; snapshots live in root-only `/etc/vps-guardian/gateway/reviews/` (`0700`, records `0600`). Workspace creation prunes expired worker records. **Refresh reviews** prunes expired root records except uncertain ones and reviews linked to still-live tasks; a missing/corrupt task ledger also retains its snapshot for manual inspection. Retention does not extend permission to approve/apply an expired snapshot. This lets a live task inspect/verify an already applied review or withdraw an expired, unapplied review before preparing a new workspace. Backups are not automatically deleted; archive them separately when appropriate. No always-on worker or additional port is needed.
 
 Hidden/sensitive paths, recognized inline secrets, symlinks, hardlinks, special files, system/account paths and Guardian's installation are excluded. Secret detection is best-effort; use this workflow only for source that may be shown to the agent and operator. The panel shows source diffs only through its authenticated loopback connection and uses safe text rendering. Keep the private panel URL and administrator credentials away from agents. Root SSH, a compromised operator device, alternate privileged credentials or OS exploits remain outside this boundary.
 
@@ -156,7 +174,7 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.35.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.36.0
 ```
 
 For development from source instead:
@@ -200,7 +218,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.35.0",
+        "@murzirius/vps-guardian-mcp@0.36.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -229,7 +247,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.35.0
+@murzirius/vps-guardian-mcp@0.36.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -249,7 +267,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.35.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.36.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.

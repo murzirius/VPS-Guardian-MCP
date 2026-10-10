@@ -17,7 +17,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from src import gateway, mission_control as missions
+from src import gateway, mission_control as missions, mission_tasks as tasks
 
 
 @unittest.skipUnless(os.environ.get("VPS_GUARDIAN_GATEWAY_INTEGRATION") == "1"
@@ -36,6 +36,7 @@ class TestGatewaySSH(unittest.TestCase):
         agent_id = "ci-" + os.urandom(6).hex()
         account = gateway._account(agent_id)
         enrolled = False
+        mission_record = None
         daemon = None
         with tempfile.TemporaryDirectory(dir=base) as temp:
             temporary = Path(temp)
@@ -108,6 +109,7 @@ LogLevel VERBOSE
                     marker = temporary / "must-not-exist"
 
                     async def check():
+                        nonlocal mission_record
                         from mcp import ClientSession, StdioServerParameters
                         from mcp.client.stdio import stdio_client
                         params = StdioServerParameters(command="/usr/bin/ssh", args=args + [f"touch {marker}"])
@@ -132,8 +134,29 @@ LogLevel VERBOSE
                                 blocked = await session.call_tool("begin_project_patch", {"project_path": str(project), "title": "Must not write"})
                                 self.assertTrue(blocked.isError)
                             elif profile == "mission-worker":
-                                for forbidden in ("apply_project_patch", "apply_mission_review", "decide_mission_review", "create_agent"):
+                                for forbidden in ("apply_project_patch", "apply_mission_review", "decide_mission_review", "create_agent", "finish_mission_task", "run_mission_task_check"):
                                     self.assertTrue((await session.call_tool(forbidden, {})).isError)
+                                assigned = tasks.create_mission_task(agent_id, str(project), "SSH mission", "Prepare a reviewed source update", ["The expected source is present"], ["python_syntax"])
+                                self.assertEqual(assigned["status"], "ok", assigned)
+                                self.assertTrue(assigned["assignment_exported"], assigned)
+                                mission_record = assigned["mission"]
+                                mission_id = mission_record["mission_id"]
+                                feed_path = gateway.POLICY_BASE / "assignments" / agent_id / (mission_id + ".json")
+                                self.assertEqual(feed_path.stat().st_uid, 0)
+                                self.assertEqual(feed_path.stat().st_mode & 0o777, 0o640)
+                                # Recover an interrupted metadata export without
+                                # replaying production writes or weakening reads.
+                                feed_path.chmod(0o600)
+                                self.assertEqual(tasks.inspect_mission_task(mission_id)["status"], "ok")
+                                self.assertEqual(feed_path.stat().st_mode & 0o777, 0o640)
+                                outsider = subprocess.run(["/usr/sbin/runuser", "-u", "nobody", "--", "/bin/cat", str(feed_path)], capture_output=True, timeout=5)
+                                self.assertNotEqual(outsider.returncode, 0)
+                                feed_write = subprocess.run(["/usr/sbin/runuser", "-u", account, "--", "/bin/sh", "-c", 'printf forged >> "$1"', "sh", str(feed_path)], capture_output=True, timeout=5)
+                                self.assertNotEqual(feed_write.returncode, 0)
+                                assignments = data(await session.call_tool("list_assigned_missions", {}))
+                                self.assertEqual(assignments["missions"][0]["mission_id"], mission_id, assignments)
+                                brief = data(await session.call_tool("get_mission_brief", {"mission_id": mission_id, "after_revision": 1}))
+                                self.assertTrue(brief["unchanged"], brief)
                                 created = data(await session.call_tool("create_mission_workspace", {"project_path": str(project), "relative_paths": ["main.py"], "title": "Independent SSH review"}))
                                 self.assertEqual(created["status"], "ok", created)
                                 workspace = created["workspace"]
@@ -150,9 +173,23 @@ LogLevel VERBOSE
                                 self.assertEqual(created_file["status"], "ok", created_file)
                                 self.assertEqual(data(await session.call_tool("submit_mission_workspace", {"workspace_id": workspace["workspace_id"]}))["status"], "ok")
                                 self.assertEqual((project / "main.py").read_text(), "print('gateway-ci')\n")
-                                reviewed = missions.import_mission_review(agent_id, workspace["workspace_id"])
+                                progress = data(await session.call_tool("report_mission_progress", {"mission_id": mission_id, "expected_revision": 1, "phase": "needs_review", "summary": "Ready for independent review", "workspace_id": workspace["workspace_id"]}))
+                                self.assertEqual(progress["status"], "ok", progress)
+                                self.assertFalse(progress["acknowledged"])
+                                mission_record = tasks.inspect_mission_task(mission_id)["mission"]
+                                self.assertEqual(mission_record["state"], "needs_review")
+                                reviewed = tasks.import_mission_task_review(mission_id, mission_record["revision"])
                                 self.assertEqual(reviewed["status"], "ok", reviewed)
-                                review = reviewed["review"]
+                                mission_record = reviewed["mission"]
+                                review = reviewed["review"]["review"]
+                                self.assertEqual(missions.decide_mission_review(review["review_id"], review["digest"], "approve")["status"], "error")
+                                for _ in range(3):
+                                    checked = tasks.run_mission_task_check(mission_id, mission_record["revision"])
+                                    self.assertEqual(checked["status"], "ok", checked)
+                                    mission_record = checked["mission"]
+                                    if mission_record["checks"]["passed"]:
+                                        break
+                                self.assertTrue(mission_record["checks"]["passed"], mission_record)
                                 self.assertEqual(missions.apply_mission_review(review["review_id"], review["digest"])["status"], "error")
                                 # The agent's OS account cannot modify production
                                 # even if it somehow obtains another shell.
@@ -169,6 +206,15 @@ LogLevel VERBOSE
                                 self.assertEqual((project / "new.py").stat().st_mode & 0o777, 0o644)
                                 removed = next(f for f in applied["review"]["result"]["written"] if f["action"] == "delete")
                                 self.assertEqual(Path(removed["backup"]).read_text(), "# obsolete source\n")
+                                mission_record = tasks.inspect_mission_task(mission_id)["mission"]
+                                self.assertEqual(mission_record["state"], "verifying")
+                                self.assertEqual(tasks.finish_mission_task(mission_id, mission_record["revision"])["status"], "error")
+                                verified = tasks.verify_mission_task(mission_id, mission_record["revision"])
+                                self.assertEqual(verified["status"], "ok", verified)
+                                mission_record = verified["mission"]
+                                self.assertTrue(mission_record["verification"]["passed"])
+                                finished = tasks.finish_mission_task(mission_id, mission_record["revision"])
+                                self.assertEqual(finished["mission"]["state"], "done", finished)
                                 copied = data(await session.call_tool("read_mission_workspace", {"workspace_id": workspace["workspace_id"], "relative_path": "main.py"}))
                                 self.assertEqual(copied["status"], "ok", copied)
                                 self.assertFalse(copied["live_baseline_checked"])
@@ -205,13 +251,20 @@ LogLevel VERBOSE
                                 break
                             await asyncio.sleep(0.05)
                         self.assertNotIn("vps-guardian-gateway", processes.stdout, "Gateway process survived SSH disconnect")
-                    asyncio.run(asyncio.wait_for(check(), timeout=45))
+                    asyncio.run(asyncio.wait_for(check(), timeout=60))
             finally:
                 if daemon is not None:
                     daemon.terminate()
                     daemon.wait(timeout=10)
                 if enrolled:
                     gateway.revoke_agent(agent_id)
+                    if mission_record is not None:
+                        mission_id = mission_record["mission_id"]
+                        self.assertTrue(tasks.MISSION_ID.fullmatch(mission_id))
+                        (gateway.POLICY_BASE / "tasks" / (mission_id + ".json")).unlink(missing_ok=True)
+                        feed_directory = gateway.POLICY_BASE / "assignments" / agent_id
+                        (feed_directory / (mission_id + ".json")).unlink(missing_ok=True)
+                        feed_directory.rmdir()
                     # PAM may leave a systemd user manager after SSH logout.
                     # Terminate ONLY this disposable test UID, never root or a
                     # production account, before removing its CI account.

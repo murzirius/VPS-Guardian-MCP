@@ -70,11 +70,26 @@
 <div class="section-top"><h2>Mission Control</h2><button id="reload-missions" type="button" class="refresh" disabled>Refresh reviews</button></div>
 <p class="muted small">Review updates, new files and deletions before anything reaches production. Approval and Apply are separate operator actions bound to the exact snapshot. New files require existing protected parents; no code is executed.</p>
 <div id="missions-message" class="notice" role="status" hidden></div>
+<div class="section-top"><h3>Mission task board</h3><button id="reload-tasks" type="button" class="refresh" disabled>Refresh tasks</button></div>
+<p class="muted small">Assign a goal to an existing Mission worker. The external agent must connect and perform the work; Guardian does not start a model. Refresh acknowledges agent reports.</p>
+<div id="tasks-message" class="notice" role="status" hidden></div>
+<details id="new-task"><summary>New mission</summary><form id="task-create-form">
+<div class="connection-grid"><div><label for="task-agent">Mission worker name</label><input id="task-agent" maxlength="24" pattern="[a-z][a-z0-9-]{0,23}" placeholder="review-bot" required></div><div><label for="task-project">Project directory</label><input id="task-project" maxlength="1024" placeholder="/srv/example-app" required></div></div>
+<label for="task-title">Title</label><input id="task-title" maxlength="120" placeholder="Improve application message" required>
+<label for="task-goal">Goal</label><textarea id="task-goal" maxlength="2400" rows="3" placeholder="Explain the intended change. Never paste keys, passwords or production secrets." required></textarea>
+<label for="task-criteria">Acceptance criteria <span class="optional">one per line, up to eight</span></label><textarea id="task-criteria" maxlength="2400" rows="3" placeholder="Describe what you will inspect before marking this mission done." required></textarea>
+<fieldset id="task-check-options"><legend>Independent snapshot checks</legend><label><input type="checkbox" value="python_syntax" checked> Python syntax</label><label><input type="checkbox" value="json_syntax" checked> JSON syntax</label><label><input type="checkbox" value="toml_syntax" checked> TOML syntax (Python 3.11+)</label></fieldset>
+<p class="field-help">Fixed parsers only, not project tests. One file per request; Linux, 192 MiB available RAM, 128 MiB parser ceiling and a three-second timeout. Unselected or unsupported formats are not checked. Live file hashes are mandatory before completion.</p>
+<button id="create-task" type="submit" class="primary" disabled>Assign mission</button>
+</form></details>
+<div id="task-board" class="mission-board"><p class="muted small">Connect as administrator to Guardian 0.36.0+ to load assigned missions.</p></div>
+<div id="task-detail" class="metadata"><p class="muted small">Choose a mission to see its goal, evidence and next action.</p></div>
+<h3>Workspace submissions</h3>
 <form id="mission-submissions-form"><label for="mission-agent">Mission worker name</label><div class="form-row"><input id="mission-agent" placeholder="review-bot" maxlength="24" pattern="[a-z][a-z0-9-]{0,23}" required spellcheck="false"><button id="load-submissions" type="submit" class="refresh" disabled>Find submissions</button></div></form>
 <div id="mission-submissions" class="operations-list"><p class="muted small">Choose an enrolled Mission worker to find its submitted workspaces.</p></div>
 <h3>Operator review queue</h3><div id="mission-reviews" class="operations-list"><p class="muted small">No reviews loaded.</p></div>
 <div id="mission-detail" class="metadata"><p class="muted small">Import a submission or select a review to see the exact diff.</p></div>
-<p class="boundary-note">Linux Gateway + separate administrator key required. First version: existing root-owned text files with protected parent directories, up to three files, 100 KB each (less on constrained hosts), 24-hour expiry. No commands, tests, new files, deletions or automatic replay. Applying multiple files is not one atomic transaction. Root/shared SSH credentials can bypass this boundary.</p>
+<p class="boundary-note">Linux Gateway and a separate administrator key are required. Workspaces support up to 16 protected source files, 512 KB each and 1 MB aggregate text (less on constrained hosts), with 24-hour expiry. Agent reports and Job IDs are unverified claims. Static parsers and live hashes do not prove application behavior. No arbitrary commands, project-test execution, automatic replay or automatic rollback. Applying multiple files is not one atomic transaction. Cancellation blocks future linked apply, not in-flight work. Root/shared SSH credentials can bypass this boundary.</p>
 </section>
 <section id="section-projects" class="card access-card" hidden>
 <div class="section-top"><h2>Projects</h2><button id="reload-projects" type="button" class="refresh" disabled>Find projects</button></div>

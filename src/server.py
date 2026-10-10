@@ -460,6 +460,7 @@ _CORE_TOOLS = {
     "create_mission_workspace", "read_mission_workspace", "stage_mission_file", "stage_mission_line_edit",
     "submit_mission_workspace", "list_mission_workspaces",
     "add_mission_workspace_files", "stage_mission_new_file", "stage_mission_file_deletion", "read_mission_workspace_lines",
+    "list_assigned_missions", "get_mission_brief", "report_mission_progress",
     "list_operations", "get_operation",
     "get_system_health", "get_top_processes", "check_service_status", "read_service_logs",
     "get_vps_topology", "find_workload", "get_workload_health", "diagnose_workload",
@@ -2386,6 +2387,28 @@ def read_mission_workspace_lines(workspace_id: str, relative_path: str, start_li
     """Read up to 200 candidate lines/24 KB with this file's hash only; never execute code or authorize stale apply."""
     from src.mission_control import read_mission_workspace_lines as operation
     return json.dumps(operation(workspace_id, relative_path, start_line, max_lines))
+
+
+@guardian_tool()
+def list_assigned_missions() -> str:
+    """List this Mission worker's private operator assignments; no automatic model or production execution."""
+    from src.mission_tasks import list_assigned_missions as operation
+    return json.dumps(operation())
+
+
+@guardian_tool()
+def get_mission_brief(mission_id: str, after_revision: int = 0) -> str:
+    """Recover a mission goal, linked IDs and next state; an unchanged revision returns a tiny status reply."""
+    from src.mission_tasks import get_mission_brief as operation
+    return json.dumps(operation(mission_id, after_revision))
+
+
+@guardian_tool()
+def report_mission_progress(mission_id: str, expected_revision: int, phase: str, summary: str,
+                            workspace_id: str | None = None, job_id: str | None = None) -> str:
+    """Report working/blocked/needs_review with optional submitted workspace and unverified Job ID; never approve or finish."""
+    from src.mission_tasks import report_mission_progress as operation
+    return json.dumps(operation(mission_id, expected_revision, phase, summary, workspace_id, job_id))
 
 
 def main() -> None:
