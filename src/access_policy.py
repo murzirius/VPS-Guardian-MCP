@@ -178,6 +178,7 @@ def get_access_policy() -> dict[str, Any]:
             "gateway_supported": os.name == "posix" and os.geteuid() == 0,
             "mission_control_supported": os.name == "posix" and os.geteuid() == 0,
             "mission_tasks_supported": os.name == "posix" and os.geteuid() == 0,
+            "mission_capsules_supported": os.name == "posix" and os.geteuid() == 0,
             "scope": "All upgraded Guardian MCP processes running as this SSH user.",
             "human_approval_enforced": False, "os_isolation": False}
 

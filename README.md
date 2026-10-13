@@ -34,14 +34,14 @@ The English-language panel runs **on your computer, not on the VPS or this proje
 With [uv](https://docs.astral.sh/uv/) installed on your computer:
 
 ```bash
-uvx --from vps-guardian-mcp==0.36.0 vps-guardian-panel
+uvx --from vps-guardian-mcp==0.37.0 vps-guardian-panel
 ```
 
 Without uv, install in a local virtual environment. Windows PowerShell:
 
 ```powershell
 py -m venv .guardian-panel
-.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.36.0
+.\.guardian-panel\Scripts\python.exe -m pip install vps-guardian-mcp==0.37.0
 .\.guardian-panel\Scripts\python.exe -m src.local_panel
 ```
 
@@ -49,7 +49,7 @@ Linux/macOS:
 
 ```bash
 python3 -m venv .guardian-panel
-.guardian-panel/bin/pip install vps-guardian-mcp==0.36.0
+.guardian-panel/bin/pip install vps-guardian-mcp==0.37.0
 .guardian-panel/bin/vps-guardian-panel
 ```
 
@@ -58,7 +58,7 @@ The browser opens automatically. Enter the VPS address, SSH user, port and **pat
 To upgrade an existing pip installation on the VPS:
 
 ```bash
-/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.36.0
+/opt/vps-guardian-mcp/.venv/bin/pip install --upgrade vps-guardian-mcp==0.37.0
 ```
 
 Upgrade any other Guardian environments used by your agents, then reconnect **all agents once** so they start the policy-aware server. Subsequent permission changes affect new calls in those sessions without a restart. In-flight operations are not cancelled, and cached client tool lists may still show disabled tools; calls to those tools are rejected.
@@ -97,11 +97,11 @@ Atomic project writes preserve the original file's owner/group. Directory write 
 Requires **Guardian 0.36.0+ on the VPS and your computer**, Linux, a newly enrolled **Mission worker** identity and a separate root operator connection. The English panel runs locally. Guardian does **not** start an LLM, dispatch prompts to an AI provider or execute arbitrary project commands. You must connect an external agent and ask it to inspect its assignments. Upgrading never silently expands an existing worker's tool allowlist.
 
 1. Upgrade both Python installations, enroll a new Mission worker in **Gateway**, and scope it to a suitable **root-protected project** (requirements below). Give the AI client only that worker's separate SSH key. Never share the operator key, worker Unix group, sudo or Docker access.
-2. Open **Mission Control → New mission**. Enter the existing worker name, project directory, goal and 1–8 acceptance criteria. Choose fixed Python/JSON/TOML syntax checks. Selecting a check affects matching files only; unsupported formats are not covered. The assignment is private metadata, not a grant of production-write access.
+2. Open **Mission Control → New mission**. Enter the existing worker name, project directory, goal and 1–8 acceptance criteria. Choose fixed Python/JSON/TOML syntax checks. With **0.37.0+ on both installations**, optionally select required **Python unittest**, **npm test** or **Node syntax** capsules (setup below). Selecting a static check affects matching files only; unsupported formats are not covered. The assignment is private metadata, not a grant of production-write access.
 3. Ask the agent to use `list_assigned_missions` and `get_mission_brief`. It can prepare a private workspace and send a short progress report. Reports permit only **working**, **blocked** or **needs review**; the last phase requires a submitted workspace for the assigned project. Existing bounded Agent Jobs can collect read-only diagnostics; a reported Job ID is explicitly **not independently verified**.
 4. Click **Refresh tasks** to acknowledge reports. While Mission Control is visible, the panel performs bounded metadata refreshes at most once every 30 seconds. With the operator panel closed, reports remain unacknowledged; there is no privileged background broker. The board distinguishes Queued, Working, Review and Results. **Hand off** reassigns only an unreviewed mission to another active, in-scope worker. Private source copies and approval are never transferred, and old reports are invalidated. Revoke the old identity separately if it must lose all future access.
 5. Select the task and choose **Import submitted workspace**. The root operator takes an immutable snapshot. A workspace claimed by a task cannot be imported through the standalone review flow to bypass task checks. Choose **Run next snapshot check** until all selected matching files pass. Each request checks one file in a fresh fixed parser process: Python AST, strict JSON or TOML parsing, never candidate execution/imports. Linux and at least 192 MiB available memory are required for a parser; it has a 128 MiB address-space cap, two CPU seconds and a three-second wall timeout. TOML parsing requires the server's Python 3.11+. There is no arbitrary shell or host-execution fallback.
-6. Choose **Open exact review**, inspect every file and diff, then independently **Approve snapshot** and **Apply to production**. These are separate actions. Approval/apply is blocked until the exact digest's checks pass. **Return for revisions** explicitly withdraws even an approved but unapplied review; the agent must create a new workspace. **Cancel mission** blocks later linked approval/apply, but is not rollback or cancellation of in-flight work. Applied or uncertain work cannot be reset or replayed through these actions.
+6. If isolated tests were selected, choose **Run tests** until each selected check passes. **Not run**, failures, interrupted runs and stale evidence block approval. Choose **Open exact review**, inspect every file and diff, then independently **Approve snapshot** and **Apply to production**. These are separate actions. Approval/apply is blocked until the exact digest's checks pass; selected capsule evidence is also revalidated against current copied inputs and the pinned local image. **Return for revisions** explicitly withdraws even an approved but unapplied review; the agent must create a new workspace. **Cancel mission** blocks later linked approval/apply, but is not rollback or cancellation of in-flight work. Applied or uncertain work cannot be reset or replayed through these actions.
 7. After application, use **Verify live files**. Guardian checks every expected file hash or deletion against the bound snapshot. Then inspect the acceptance criteria yourself and choose **Confirm acceptance and finish**. Completion performs another fresh hash check. The agent cannot mark the mission done. Hashes and syntax checks do **not** prove that application behavior, tests, services or payment processing work.
 
 **Recovery and token use:** revisions reject stale operator requests; `get_mission_brief(after_revision=...)` returns a tiny unchanged reply, otherwise just the current goal/state, linked IDs and evidence summary rather than an entire timeline. Interrupted production writes remain uncertain and are never automatically replayed. Tasks stay independent of the AI's chat history; they do not copy or publish that chat.
@@ -109,6 +109,25 @@ Requires **Guardian 0.36.0+ on the VPS and your computer**, Linux, a newly enrol
 **Private storage and bounds:** root ledger `/etc/vps-guardian/gateway/tasks/` is `0700`, records `0600`; per-worker assignment directories are root-owned `0750` with `0640` files readable only by that worker's private Unix group and root. The worker cannot modify these assignments. Its untrusted reports live in its own private `.local/share/vps-guardian-mission-progress/`. At most 64 task records, eight active assignments per identity, 96 KB per metadata record and 32 short timeline entries. Completed records count toward the fixed capacity; archive them privately through an administrator's maintenance workflow before reaching the ceiling. Guardian never deletes tasks or silently grows storage. Lifetime is at most seven days and never exceeds the assigned identity's expiry. Root operations serialize enrollment, revocation, task transitions and production review. A failed assignment export can be repaired by Refresh without repeating production work. Secret redaction is best-effort; never put secrets in a goal or report.
 
 Standalone workspaces remain available for direct manual review without task-selected parser checks. Only a **linked** task gains these additional gates; this does not constrain independent root SSH or other privileged credentials. Mission workers can use bounded read-only Agent Job steps, but cannot execute a recovery restart through that profile.
+
+#### Isolated Mission tests (0.37.0+)
+
+**Setup:** upgrade Guardian on your computer and VPS, reconnect the local panel, and use a separate root operator connection. An existing 0.36.0 Mission worker needs no additional tools: the new test operation is operator-only. On the VPS, Docker must already be installed with a local Unix daemon. An administrator must explicitly preload the desired trusted image; Guardian never installs Docker, pulls images, downloads dependencies or grants a worker Docker/sudo access. For the defaults, preload only the runtime you need:
+
+```bash
+docker pull python:3.12-alpine  # Python unittest
+docker pull node:20-alpine     # npm test / Node syntax
+```
+
+The operator helper accepts `VPS_GUARDIAN_CAPSULE_PYTHON_IMAGE` / `VPS_GUARDIAN_CAPSULE_NODE_IMAGE` in **its server-side startup environment** for a locally built, trusted image with project dependencies already installed. They are not client-side agent environment settings. Images are pinned to their immutable local ID for each check; changing a tag's target invalidates evidence. Default images do not contain your third-party dependencies. Missing dependencies produce failure, not an automatic install or host fallback. The panel does not build/configure custom images for you.
+
+**Use:** select required isolated checks when creating a **new mission**. Existing assignments keep their original requirements. Import the submitted review and run one selected check per **Run tests** request. Python discovers `unittest` cases under `tests/`; zero discovered cases or all-skipped cases cannot pass. npm executes the copied `package.json` test script offline; an exit code of zero only proves that this script reported success, not how many assertions it ran. Node syntax checks reviewed, non-deleted JavaScript candidates. Correct a failed proposal through **Return for revisions** and a new workspace. An unavailable runtime can be repaired and retried without changing the approved bytes. Test details expand on demand; output caps at 4 KiB and is best-effort redacted. Agent assignment feeds get only compact evidence status, never operator test logs.
+
+**Isolation and bounds:** one capsule at a time per Guardian state/SSH user, 30-second container timeout, 128 MiB RAM with no additional swap allowance, half a CPU, 64 PIDs, read-only filesystem and copied source mount, no network, no capabilities, no privilege escalation, UID/GID 65534 and a 16 MiB temporary filesystem. No production tree, Docker socket, production environment, databases or credentials are mounted/passed. A private `0700` host parent protects the temporary copy from other local non-root accounts. Source inputs must be root-protected, single-linked regular UTF-8 files; eligible symlinks, writable inputs, binary inputs and recognized inline secrets refuse the run. Hidden/sensitive paths, `.git`, virtual environments, `node_modules`, build output, logs and databases are excluded rather than copied. Detection is best-effort: use only a secret-free source/test tree and trusted images. A container is a Linux isolation boundary, not protection against kernel/Docker vulnerabilities.
+
+At least **384 MiB available RAM**, **64 MiB free temporary disk**, and enabled operator capsule limits are required. Copying caps at 250 files / 8 MiB, 500 scanned directories / 2,000 entries and ten seconds per scan. The panel allows up to 90 seconds for setup, copying, one test and evidence revalidation. If a helper is interrupted, refresh before retrying: a recorded **running** state is not a pass, and Guardian does not claim that an interrupted container was cleaned up. Never retry an ambiguous production write.
+
+**Evidence:** hashes bind the root review, all eligible copied baseline/candidate files, the pinned image and the isolation recipe. Inputs are checked again after a successful run and before approval/apply; changes invalidate old passes and block the operation. This covers the filtered test tree, not excluded files or production integrations. It does not prove live service/payment behavior or provide automatic deployment, restart or rollback. Previously approved standalone reviews and privileged direct SSH remain outside these task gates.
 
 #### Private workspaces and operator approval
 
@@ -174,7 +193,7 @@ sudo mkdir -p /opt/vps-guardian-mcp
 sudo chown "$USER" /opt/vps-guardian-mcp
 python3 -m venv /opt/vps-guardian-mcp/.venv
 /opt/vps-guardian-mcp/.venv/bin/pip install --upgrade pip
-/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.36.0
+/opt/vps-guardian-mcp/.venv/bin/pip install vps-guardian-mcp==0.37.0
 ```
 
 For development from source instead:
@@ -218,7 +237,7 @@ Use this configuration for JSON-based MCP clients:
       "command": "npx",
       "args": [
         "-y",
-        "@murzirius/vps-guardian-mcp@0.36.0",
+        "@murzirius/vps-guardian-mcp@0.37.0",
         "--host", "<VPS_IP_OR_HOSTNAME>",
         "--user", "root",
         "--key", "~/.ssh/id_ed25519",
@@ -247,7 +266,7 @@ Add these arguments as separate rows, in order:
 
 ```text
 -y
-@murzirius/vps-guardian-mcp@0.36.0
+@murzirius/vps-guardian-mcp@0.37.0
 --host
 <VPS_IP_OR_HOSTNAME>
 --user
@@ -267,7 +286,7 @@ Save, restart the client, then use `/mcp` to confirm that `vps-guardian` is conn
 **Claude Code**
 
 ```bash
-claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.36.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
+claude mcp add vps-guardian -- npx -y @murzirius/vps-guardian-mcp@0.37.0 --host <VPS_IP_OR_HOSTNAME> --user root --key ~/.ssh/id_ed25519 --mode controlled --tool-profile core
 ```
 
 **A non-root SSH user** — replace `root` after `--user`. Do not add passwordless `sudo` just for the MCP; grant the minimum group permissions needed.

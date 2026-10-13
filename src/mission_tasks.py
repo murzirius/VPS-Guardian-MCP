@@ -1,6 +1,7 @@
 """Root-owned mission ledger, private assignments and untrusted agent reports.
 
-No daemon, LLM or project command is started. Reports are reconciled by the
+No daemon or LLM is started. Selected project tests run only in operator-triggered
+offline capsules. Reports are reconciled by the
 operator, never treated as proof of success or permission to write production.
 """
 from __future__ import annotations
@@ -20,7 +21,7 @@ import sys
 import time
 import unicodedata
 
-from src import gateway, mission_control as workspaces
+from src import gateway, mission_control as workspaces, mission_capsules
 from src.resource_policy import get_runtime_budget
 from src.safe_io import atomic_replace, open_regular_fd, private_directory, read_bounded
 from src.safety import _scrub_text
@@ -30,10 +31,11 @@ JOB_ID = re.compile(r"job_[0-9a-f]{16}\Z")
 MAX_TASKS = 64
 MAX_ACTIVE_PER_AGENT = 8
 MAX_RECORD = 96000
-CHECKS = {"python_syntax", "json_syntax", "toml_syntax"}
+STATIC_CHECKS = {"python_syntax", "json_syntax", "toml_syntax"}
+CHECKS = STATIC_CHECKS | mission_capsules.CHECKS
 FINAL = {"done", "cancelled", "expired"}
 OPERATOR_TOOLS = frozenset({"create_mission_task", "list_mission_tasks", "inspect_mission_task",
-    "reassign_mission_task", "import_mission_task_review", "run_mission_task_check",
+    "reassign_mission_task", "import_mission_task_review", "run_mission_task_check", "run_mission_task_tests",
     "verify_mission_task", "finish_mission_task", "cancel_mission_task", "return_mission_task"})
 
 
@@ -159,6 +161,9 @@ def _export(item):
     path = directory / (item["mission_id"] + ".json")
     feed = {**_public(item, detail=True), "uid": item["uid"], "key_fingerprint": item["key_fingerprint"],
             "epoch": item["epoch"], "last_report_hash": item.get("last_report_hash")}
+    if feed.get("checks"):
+        # Test output is private operator detail, never an agent mailbox payload.
+        feed["checks"] = {key: feed["checks"].get(key) for key in ("digest", "passed", "complete")}
     raw = json.dumps(feed, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
     # Validate an existing target BEFORE replace can read or preserve metadata.
     if os.path.lexists(path):
@@ -333,8 +338,10 @@ def create_mission_task(agent_id: str, project_path: str, title: str, goal: str,
     if not isinstance(acceptance_criteria, list) or not 1 <= len(acceptance_criteria) <= 8:
         raise ValueError("Provide one to eight acceptance criteria.")
     criteria = [_text(value, 300) for value in acceptance_criteria]
-    if not isinstance(required_checks, list) or len(required_checks) > 3 or any(c not in CHECKS for c in required_checks):
-        raise ValueError("Select supported static checks only.")
+    if (not isinstance(required_checks, list) or len(required_checks) > len(CHECKS)
+            or any(not isinstance(c, str) or c not in CHECKS for c in required_checks)
+            or len(set(required_checks)) != len(required_checks)):
+        raise ValueError("Select distinct supported snapshot checks.")
     paths = workspaces._paths(_directory(), MISSION_ID, MAX_TASKS)
     if len(paths) >= MAX_TASKS or sum(_task(p.stem)["agent_id"] == agent_id and _task(p.stem)["state"] not in FINAL for p in paths) >= MAX_ACTIVE_PER_AGENT:
         raise ValueError("Mission capacity reached.")
@@ -481,6 +488,19 @@ def _assert_review_allowed(review, require_checks=False):
     if require_checks and (not item["checks"] or item["checks"]["digest"] != review["digest"]
                            or not item["checks"]["complete"] or not item["checks"]["passed"]):
         raise PermissionError("Independent snapshot checks must pass before approval or apply.")
+    if require_checks and any(c in mission_capsules.CHECKS for c in item["required_checks"]):
+        results = (item["checks"] or {}).get("capsules", [])
+        required = set(item["required_checks"]) & mission_capsules.CHECKS
+        if {r["check"] for r in results if r.get("passed") is True} != required:
+            raise PermissionError("Required isolated tests must pass.")
+        try:
+            mission_capsules.validate(review, results)
+        except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
+            item["checks"].update(passed=False, complete=False)
+            for result in results:
+                result.update(passed=False, status="stale", error="Inputs or local runtime changed. Run tests again.")
+            _commit(item, "tests_invalidated", "Test evidence is stale or unavailable; approval/apply blocked.")
+            raise PermissionError("Test evidence is stale or unavailable. Run tests again.") from None
 
 
 def _retain_linked_review(review):
@@ -558,6 +578,18 @@ def _check_plan(item, review):
             if file["candidate"] is not None and suffixes.get(Path(file["relative_path"]).suffix) in item["required_checks"]]
 
 
+def _checks_status(item, review, checks):
+    plan = _check_plan(item, review)
+    static_complete = len(checks["results"]) == len(plan)
+    checks["static_passed"] = static_complete and all(r["passed"] for r in checks["results"])
+    required = set(item["required_checks"]) & mission_capsules.CHECKS
+    results = checks.get("capsules", [])
+    capsule_complete = {r["check"] for r in results} == required
+    checks["complete"] = static_complete and capsule_complete
+    checks["passed"] = checks["complete"] and all(r["passed"] for r in checks["results"] + results)
+    checks["note"] = "Selected static parsers and isolated tests only. Excluded files and unselected checks are not covered; this is not an application correctness proof."
+
+
 @_safe_errors
 @gateway._serialized_administration
 def run_mission_task_check(mission_id: str, expected_revision: int):
@@ -579,11 +611,54 @@ def run_mission_task_check(mission_id: str, expected_revision: int):
         file, check = pending[0]
         checks["results"] = [r for r in checks["results"] if r["relative_path"] != file["relative_path"]]
         checks["results"].append({"relative_path": file["relative_path"], "check": check, **_parse(check, file["candidate"])})
-    checks["complete"] = len(checks["results"]) == len(plan)
-    checks["passed"] = checks["complete"] and all(result["passed"] for result in checks["results"])
-    checks["note"] = "Fixed static parsers only, not project test execution or a correctness proof. Files in unselected/unsupported formats are not checked."
+    _checks_status(item, review, checks)
     item["checks"] = checks
     return _commit(item, "snapshot_check", "Snapshot check recorded; " + ("all selected checks passed." if checks["passed"] else "more checks or corrections required."))
+
+
+@_safe_errors
+@gateway._serialized_administration
+def run_mission_task_tests(mission_id: str, expected_revision: int):
+    """Operator-only: run the next selected isolated test, never host code."""
+    item = _current(mission_id, expected_revision)
+    if not item["review_id"]:
+        raise ValueError("Import a snapshot first.")
+    _, review = workspaces._review(item["review_id"])
+    if review["state"] not in {"pending", "approved"}:
+        raise ValueError("Only unapplied snapshots can be tested.")
+    workspaces._review_live(review)
+    required = set(item["required_checks"]) & mission_capsules.CHECKS
+    if not required:
+        raise ValueError("No isolated tests were selected when assigning this mission.")
+    checks = item["checks"]
+    if not checks or checks["digest"] != review["digest"]:
+        checks = {"digest": review["digest"], "results": [], "complete": False, "passed": False}
+    results = checks.setdefault("capsules", [])
+    # A new run always invalidates older capsule passes first. If a context
+    # changed, all requested checks must use the new context, not mixed proofs.
+    passed = [r for r in results if r["passed"]]
+    if passed:
+        try:
+            mission_capsules.validate(review, passed)
+        except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
+            results.clear()
+    done = {r["check"] for r in results if r["passed"]}
+    check = sorted(required - done)[0] if required - done else sorted(required)[0]
+    results[:] = [r for r in results if r["check"] != check]
+    results.append({"check": check, "passed": False, "status": "running", "at": time.time()})
+    item["checks"] = checks
+    _checks_status(item, review, checks)
+    _commit(item, "tests_started", "Isolated test started. An interrupted request is not a pass; refresh before retrying.")
+    result = mission_capsules.run(review, check)
+    # Identity, expiry and baseline may have changed during bounded execution.
+    try:
+        workspaces._review_live(review)
+    except (OSError, ValueError):
+        result.update(passed=False, status="stale", error="Review or live identity/baseline changed during testing.")
+    results[:] = [r for r in results if r["check"] != check]
+    results.append(result)
+    _checks_status(item, review, checks)
+    return _commit(item, "isolated_test", check + ": " + result["status"] + "; production is unchanged.")
 
 
 def _verify(item):

@@ -35,6 +35,7 @@ ADMIN_TOOLS = frozenset({"get_access_policy", "save_access_policy", "get_workspa
 ADMIN_TOOLS = ADMIN_TOOLS | MISSION_OPERATOR_TOOLS | TASK_OPERATOR_TOOLS
 POLL_SECONDS = 30
 REQUEST_TIMEOUT = 20
+CAPSULE_REQUEST_TIMEOUT = 90
 MAX_BODY = 8192
 
 
@@ -163,7 +164,8 @@ def stderr_tail():
 async def read_tool(session: ClientSession, name: str, arguments=None, *, admin=False) -> dict[str, Any]:
     if name not in (ADMIN_TOOLS if admin else ALLOWED_TOOLS):
         raise ValueError("This panel only exposes its fixed operator and monitoring tools.")
-    result = await asyncio.wait_for(session.call_tool(name, arguments or {}), REQUEST_TIMEOUT)
+    timeout = CAPSULE_REQUEST_TIMEOUT if admin and name in {"run_mission_task_tests", "decide_mission_review", "apply_mission_review"} else REQUEST_TIMEOUT
+    result = await asyncio.wait_for(session.call_tool(name, arguments or {}), timeout)
     if result.isError:
         raise ValueError("MCP tool failed")
     data = getattr(result, "structuredContent", None)
@@ -225,7 +227,8 @@ class PanelController:
                                      "gateway_agents": None, "gateway_error": None, "gateway_supported": False,
                                      "mission_supported": False, "mission_submissions": None, "mission_reviews": None,
                                      "mission_review": None, "mission_error": None,
-                                     "mission_tasks_supported": False, "mission_tasks": None, "mission_task": None, "mission_tasks_error": None}
+                                     "mission_tasks_supported": False, "mission_tasks": None, "mission_task": None, "mission_tasks_error": None,
+                                     "mission_capsules_supported": False}
 
     def status(self):
         with self.lock:
@@ -248,7 +251,7 @@ class PanelController:
                               operations=None, operation=None, operations_error=None, operations_supported=False,
                               gateway_agents=None, gateway_error=None, gateway_supported=False,
                               mission_supported=False, mission_submissions=None, mission_reviews=None, mission_review=None, mission_error=None,
-                              mission_tasks_supported=False, mission_tasks=None, mission_task=None, mission_tasks_error=None,
+                              mission_tasks_supported=False, mission_capsules_supported=False, mission_tasks=None, mission_task=None, mission_tasks_error=None,
                               target={"host": config["host"], "user": config["user"], "port": config["port"]})
             self.thread = threading.Thread(target=self._worker, args=(params, admin_params), daemon=True)
             self.thread.start()
@@ -263,7 +266,7 @@ class PanelController:
                               operations=None, operation=None, operations_supported=False, operations_error=None,
                               gateway_agents=None, gateway_supported=False, gateway_error=None,
                               mission_supported=False, mission_submissions=None, mission_reviews=None, mission_review=None, mission_error=None,
-                              mission_tasks_supported=False, mission_tasks=None, mission_task=None, mission_tasks_error=None)
+                              mission_tasks_supported=False, mission_capsules_supported=False, mission_tasks=None, mission_task=None, mission_tasks_error=None)
 
     def policy_request(self, data=None):
         if data is not None:
@@ -382,6 +385,7 @@ class PanelController:
 
     def tasks_request(self, name, data):
         from src.mission_tasks import MISSION_ID, CHECKS, _text
+        from src.mission_capsules import CHECKS as CAPSULE_CHECKS
         from src.gateway import AGENT_ID
         common = {"mission_id", "expected_revision"}
         fields = {"create_mission_task": {"agent_id", "project_path", "title", "goal", "acceptance_criteria", "required_checks"},
@@ -407,12 +411,15 @@ class PanelController:
                     raise ValueError()
                 for criterion in data["acceptance_criteria"]:
                     _text(criterion, 300)
-                if (not isinstance(data["required_checks"], list) or len(data["required_checks"]) > 3
-                        or any(not isinstance(c, str) or c not in CHECKS for c in data["required_checks"])):
+                if (not isinstance(data["required_checks"], list) or len(data["required_checks"]) > len(CHECKS)
+                        or any(not isinstance(c, str) or c not in CHECKS for c in data["required_checks"])
+                        or len(set(data["required_checks"])) != len(data["required_checks"])):
                     raise ValueError()
             except (ValueError, TypeError):
-                raise PanelInputError("Provide bounded text, 1–8 criteria and supported static checks.") from None
+                raise PanelInputError("Provide bounded text, 1–8 criteria and distinct supported snapshot checks.") from None
         with self.lock:
+            if (name == "run_mission_task_tests" or name == "create_mission_task" and any(c in CAPSULE_CHECKS for c in data["required_checks"])) and not self.state["mission_capsules_supported"]:
+                raise RuntimeError("Upgrade Guardian on your computer and VPS to 0.37.0+ for isolated Mission tests.")
             if self.state["connection"] != "connected" or not self.state["mission_tasks_supported"]:
                 raise RuntimeError("Connect as administrator to Guardian 0.36.0+ to manage mission tasks.")
             if self.state["policy_busy"]:
@@ -441,9 +448,10 @@ class PanelController:
         # Short-lived helper: no extra idle MCP process on a small VPS.
         with stderr_tail() as (errlog, tail):
             try:
+                timeout = CAPSULE_REQUEST_TIMEOUT if name in {"run_mission_task_tests", "decide_mission_review", "apply_mission_review"} else REQUEST_TIMEOUT
                 async def exchange():
                     async with stdio_client(params, errlog=errlog) as (read, write):
-                        async with ClientSession(read, write, read_timeout_seconds=datetime.timedelta(seconds=REQUEST_TIMEOUT)) as session:
+                        async with ClientSession(read, write, read_timeout_seconds=datetime.timedelta(seconds=timeout)) as session:
                             await session.initialize()
                             result = await read_tool(session, name, arguments, admin=True)
                             if name == "list_mission_tasks" and result.get("status") == "ok":
@@ -461,7 +469,7 @@ class PanelController:
                                     detail = await read_tool(session, "get_mission_review", {"review_id": selected}, admin=True)
                                     result["selected_review"] = detail if detail.get("status") == "ok" else None
                             return result
-                result = await asyncio.wait_for(exchange(), REQUEST_TIMEOUT)
+                result = await asyncio.wait_for(exchange(), timeout)
                 field = "gateway_agents" if name in {"list_agents", "create_agent", "revoke_agent"} else "operations" if name == "list_operations" else "operation" if name == "get_operation" else "access" if name in {"get_access_policy", "save_access_policy"} else "projects" if name == "list_operator_projects" else "project" if name == "inspect_operator_project" else "workspace"
                 if name in MISSION_OPERATOR_TOOLS:
                     field = "mission_reviews" if name == "list_mission_reviews" else "mission_submissions" if name == "list_mission_submissions" else "mission_review"
@@ -519,6 +527,7 @@ class PanelController:
                                 self.state["gateway_supported"] = result.get("gateway_supported") is True
                                 self.state["mission_supported"] = result.get("mission_control_supported") is True
                                 self.state["mission_tasks_supported"] = result.get("mission_tasks_supported") is True
+                                self.state["mission_capsules_supported"] = result.get("mission_capsules_supported") is True
                                 self.state["workspace_supported"] = supported
                                 self.state["workspace"] = result.get("workspace") if supported else None
                                 # Scope may have changed. Discard stale project metadata.
@@ -745,9 +754,10 @@ class PanelHandler(BaseHTTPRequestHandler):
                          "/api/missions/list": "list_mission_reviews", "/api/missions/inspect": "get_mission_review",
                          "/api/missions/decide": "decide_mission_review", "/api/missions/apply": "apply_mission_review"}
                 self.server.controller.mission_request(names[path], data)
-            elif path in {"/api/tasks/create", "/api/tasks/list", "/api/tasks/inspect", "/api/tasks/reassign", "/api/tasks/import", "/api/tasks/check", "/api/tasks/verify", "/api/tasks/finish", "/api/tasks/cancel", "/api/tasks/return"}:
+            elif path in {"/api/tasks/create", "/api/tasks/list", "/api/tasks/inspect", "/api/tasks/reassign", "/api/tasks/import", "/api/tasks/check", "/api/tasks/tests", "/api/tasks/verify", "/api/tasks/finish", "/api/tasks/cancel", "/api/tasks/return"}:
                 names = {"create": "create_mission_task", "list": "list_mission_tasks", "inspect": "inspect_mission_task",
                          "reassign": "reassign_mission_task", "import": "import_mission_task_review", "check": "run_mission_task_check",
+                         "tests": "run_mission_task_tests",
                          "verify": "verify_mission_task", "finish": "finish_mission_task", "cancel": "cancel_mission_task", "return": "return_mission_task"}
                 self.server.controller.tasks_request(names[path.rsplit("/", 1)[1]], data)
             elif path in ("/api/disconnect", "/api/refresh") and data == {}:

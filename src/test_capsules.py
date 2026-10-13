@@ -149,7 +149,7 @@ def _open_project_regular(project: str, relative: str) -> int:
         os.close(directory)
 
 
-def _copy_snapshot(project: str, destination: str) -> Dict[str, Any]:
+def _copy_snapshot(project: str, destination: str, *, protected: bool = False) -> Dict[str, Any]:
     count = 0
     total = 0
     directories = 0
@@ -163,12 +163,18 @@ def _copy_snapshot(project: str, destination: str) -> Dict[str, Any]:
             raise ValueError("Project exceeds the capsule directory or scan-time budget.")
         if not _within(os.path.realpath(current), project):
             raise ValueError("Project directory changed during snapshot.")
+        if protected:
+            from src import gateway
+            from pathlib import Path
+            gateway._trusted_directory(Path(current))
         with os.scandir(current) as listing:
             for entry in listing:
                 entries_seen += 1
                 if entries_seen > MAX_SNAPSHOT_ENTRIES or time.monotonic() > deadline:
                     raise ValueError("Project exceeds the capsule entry or scan-time budget.")
                 if entry.is_symlink():
+                    if protected and _allowed_name(entry.name):
+                        raise ValueError("A capsule input is a symlink; use a protected regular source tree.")
                     continue
                 name = entry.name
                 relative = name if not relative_dir else f"{relative_dir}/{name}"
@@ -183,6 +189,8 @@ def _copy_snapshot(project: str, destination: str) -> Dict[str, Any]:
                     info = os.fstat(descriptor)
                     if not stat.S_ISREG(info.st_mode):
                         continue
+                    if protected and (info.st_uid != 0 or info.st_nlink != 1 or info.st_mode & 0o6022):
+                        raise ValueError("Every capsule input must be a root-protected, single-linked regular file.")
                     if info.st_size > MAX_LARGE_FILE or count >= MAX_SNAPSHOT_FILES or total + info.st_size > MAX_SNAPSHOT_BYTES:
                         raise ValueError("Project exceeds the capsule snapshot budget (250 files / 8 MiB).")
                     target_dir = _snapshot_parent(destination, relative)
@@ -386,8 +394,10 @@ def test_project_patch(patch_id: str, check: str = "auto", confirmation_token: O
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return {"status": "busy", "error": "Another Guardian process is running a capsule."}
-        with tempfile.TemporaryDirectory(prefix="vps-guardian-capsule-") as snapshot:
-            os.chmod(snapshot, 0o755)
+        with tempfile.TemporaryDirectory(prefix="vps-guardian-capsule-") as private:
+            os.chmod(private, 0o700)
+            snapshot = os.path.join(private, "source")
+            os.mkdir(snapshot, 0o755)
             summary = _copy_snapshot(item["project_path"], snapshot)
             changed = _apply_candidates(item, snapshot, summary)
             if selected == "python_unittest" and not any(name.startswith("test") and name.endswith(".py") for _, _, files in os.walk(os.path.join(snapshot, "tests")) for name in files):

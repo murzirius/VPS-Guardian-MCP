@@ -68,7 +68,7 @@
 </section>
 <section id="section-missions" class="card access-card" hidden>
 <div class="section-top"><h2>Mission Control</h2><button id="reload-missions" type="button" class="refresh" disabled>Refresh reviews</button></div>
-<p class="muted small">Review updates, new files and deletions before anything reaches production. Approval and Apply are separate operator actions bound to the exact snapshot. New files require existing protected parents; no code is executed.</p>
+<p class="muted small">Review updates, new files and deletions before anything reaches production. Approval and Apply are separate operator actions bound to the exact snapshot. New files require existing protected parents. Selected tests execute only in operator-triggered offline capsules, never on the host.</p>
 <div id="missions-message" class="notice" role="status" hidden></div>
 <div class="section-top"><h3>Mission task board</h3><button id="reload-tasks" type="button" class="refresh" disabled>Refresh tasks</button></div>
 <p class="muted small">Assign a goal to an existing Mission worker. The external agent must connect and perform the work; Guardian does not start a model. Refresh acknowledges agent reports.</p>
@@ -79,7 +79,9 @@
 <label for="task-goal">Goal</label><textarea id="task-goal" maxlength="2400" rows="3" placeholder="Explain the intended change. Never paste keys, passwords or production secrets." required></textarea>
 <label for="task-criteria">Acceptance criteria <span class="optional">one per line, up to eight</span></label><textarea id="task-criteria" maxlength="2400" rows="3" placeholder="Describe what you will inspect before marking this mission done." required></textarea>
 <fieldset id="task-check-options"><legend>Independent snapshot checks</legend><label><input type="checkbox" value="python_syntax" checked> Python syntax</label><label><input type="checkbox" value="json_syntax" checked> JSON syntax</label><label><input type="checkbox" value="toml_syntax" checked> TOML syntax (Python 3.11+)</label></fieldset>
-<p class="field-help">Fixed parsers only, not project tests. One file per request; Linux, 192 MiB available RAM, 128 MiB parser ceiling and a three-second timeout. Unselected or unsupported formats are not checked. Live file hashes are mandatory before completion.</p>
+<fieldset id="task-test-options"><legend>Required isolated tests (Guardian 0.37.0+)</legend><label><input type="checkbox" value="python_unittest"> Python unittest</label><label><input type="checkbox" value="npm_test"> npm test</label><label><input type="checkbox" value="node_syntax"> Node syntax</label></fieldset>
+<p class="field-help">Optional at assignment, mandatory before approval if selected. Linux, Docker, a preloaded image and 384 MiB available RAM required. No network, automatic dependency installation or host execution fallback.</p>
+<p class="field-help">Static checks use fixed parsers, not project execution: one file per request, Linux, 192 MiB available RAM, a 128 MiB parser ceiling and three-second timeout. Unselected or unsupported formats are not checked. Live file hashes are mandatory before completion.</p>
 <button id="create-task" type="submit" class="primary" disabled>Assign mission</button>
 </form></details>
 <div id="task-board" class="mission-board"><p class="muted small">Connect as administrator to Guardian 0.36.0+ to load assigned missions.</p></div>
@@ -89,7 +91,7 @@
 <div id="mission-submissions" class="operations-list"><p class="muted small">Choose an enrolled Mission worker to find its submitted workspaces.</p></div>
 <h3>Operator review queue</h3><div id="mission-reviews" class="operations-list"><p class="muted small">No reviews loaded.</p></div>
 <div id="mission-detail" class="metadata"><p class="muted small">Import a submission or select a review to see the exact diff.</p></div>
-<p class="boundary-note">Linux Gateway and a separate administrator key are required. Workspaces support up to 16 protected source files, 512 KB each and 1 MB aggregate text (less on constrained hosts), with 24-hour expiry. Agent reports and Job IDs are unverified claims. Static parsers and live hashes do not prove application behavior. No arbitrary commands, project-test execution, automatic replay or automatic rollback. Applying multiple files is not one atomic transaction. Cancellation blocks future linked apply, not in-flight work. Root/shared SSH credentials can bypass this boundary.</p>
+<p class="boundary-note">Linux Gateway and a separate administrator key are required. Workspaces support up to 16 protected source files, 512 KB each and 1 MB aggregate text (less on constrained hosts), with 24-hour expiry. Agent reports and Job IDs are unverified claims. Static parsers, selected isolated tests and live hashes do not prove application behavior. No arbitrary host commands, automatic replay or automatic rollback. Applying multiple files is not one atomic transaction. Cancellation blocks future linked apply, not in-flight work. Root/shared SSH credentials can bypass this boundary.</p>
 </section>
 <section id="section-projects" class="card access-card" hidden>
 <div class="section-top"><h2>Projects</h2><button id="reload-projects" type="button" class="refresh" disabled>Find projects</button></div>

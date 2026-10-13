@@ -396,7 +396,7 @@
   async function taskRequest(path, body, changed = false) {
     if (state?.connection !== 'connected' || !state.mission_tasks_supported || state.policy_busy) return;
     if (path === 'create') pendingTaskCreation = {previous:state.mission_task?.mission?.mission_id};
-    try { render(await api('tasks/' + path, body)); if (changed) taskReloadPending = true; }
+    try { render(await api('tasks/' + path, body)); if (changed) { taskReloadPending = true; missionReloadPending = true; } }
     catch (error) { pendingTaskCreation = null; notice(error.message); }
   }
   async function refreshTasks(force = false) {
@@ -408,6 +408,8 @@
   function renderTasks(data) {
     const available = data.connection === 'connected' && data.mission_tasks_supported && !data.policy_busy;
     for (const id of ['reload-tasks','create-task','task-agent','task-project','task-title','task-goal','task-criteria','task-check-options']) $(id).disabled = !available;
+    $('task-test-options').disabled = !available || !data.mission_capsules_supported;
+    if (!data.mission_capsules_supported) for (const input of $('task-test-options').querySelectorAll('input')) input.checked = false;
     $('tasks-message').textContent = data.mission_tasks_error || (data.connection === 'connected' && !data.mission_tasks_supported ? 'Upgrade Guardian on your computer and VPS to 0.36.0+ for mission tasks.' : '');
     $('tasks-message').hidden = !$('tasks-message').textContent;
     if (pendingTaskCreation && !data.policy_busy) {
@@ -451,12 +453,22 @@
     detail.append(textNode('h4', 'Independent evidence'));
     if (!item.checks) detail.append(textNode('p', 'Snapshot checks have not run. Approval is blocked for linked snapshots.', 'field-help'));
     else {
-      detail.append(textNode('p', item.checks.passed ? 'Selected snapshot checks passed.' : item.checks.complete ? 'A snapshot check failed. Correct the proposal or retry after resolving the stated resource/parser issue.' : 'More snapshot files need checking.', 'field-help'));
+      detail.append(textNode('p', item.checks.passed ? 'Selected snapshot checks passed.' : item.checks.static_passed ? 'Static checks are complete; required isolated tests still need a pass.' : item.checks.complete ? 'A snapshot check failed. Correct the proposal or retry after resolving the stated resource/parser issue.' : 'More snapshot files need checking.', 'field-help'));
       if (!item.checks.results?.length) detail.append(textNode('p', 'No selected formats matched; no syntax checks were performed.', 'field-help'));
       for (const check of item.checks.results || []) detail.append(textNode('p', check.relative_path + ' · ' + check.check + ' · ' + (check.passed ? 'passed' : check.error || 'failed'), 'field-help'));
+      for (const test of item.checks.capsules || []) {
+        const status = test.passed ? 'Passed' : ['not_run','unavailable','error'].includes(test.status) ? 'Not run' : test.status === 'running' ? 'Running or interrupted — refresh before retrying' : test.status === 'stale' ? 'Stale — run again' : 'Failed';
+        detail.append(textNode('p', test.check + ' · ' + status + (test.error ? ' · ' + test.error : ''), test.passed ? 'field-help' : 'notice'));
+        const evidence = document.createElement('details'); evidence.append(textNode('summary', 'Test details'));
+        if (test.evidence) evidence.append(textNode('p', 'Pinned image: ' + test.evidence.image_id + ' · input fingerprint: ' + test.evidence.candidate, 'field-help'));
+        if (test.snapshot) evidence.append(textNode('p', test.snapshot.files + ' copied files · ' + test.snapshot.bytes + ' bytes · ' + test.duration_seconds + 's', 'field-help'));
+        if (test.output) evidence.append(textNode('pre', test.output, 'mission-diff'));
+        if (test.output_truncated) evidence.append(textNode('p', 'Output truncated at 4 KiB.', 'field-help'));
+        detail.append(evidence);
+      }
     }
     if (item.verification) detail.append(textNode('p', item.verification.passed ? 'Live file hashes match the bound snapshot.' : 'Live file verification failed. Inspect production; nothing is rolled back or replayed.', item.verification.passed ? 'field-help' : 'notice'));
-    detail.append(textNode('p', 'Syntax and file hashes do not prove that services, tests or payments work. Inspect the acceptance criteria before finishing.', 'boundary-note'));
+    detail.append(textNode('p', 'Selected tests run on a filtered copy, not production. Passing checks do not prove service or payment behavior; inspect acceptance criteria before finishing. Dependencies must already be available in the local image.', 'boundary-note'));
     const actions = document.createElement('div'); actions.className = 'policy-actions';
     const body = {mission_id:item.mission_id, expected_revision:item.revision};
     function action(label, path, warning, extra = {}) {
@@ -467,7 +479,8 @@
     if (item.review_id) {
       const open = textNode('button', 'Open exact review', 'refresh'); open.type = 'button'; open.disabled = !available;
       open.addEventListener('click', () => { missionRequest('inspect', {review_id:item.review_id}); $('mission-detail').scrollIntoView({behavior:'smooth',block:'start'}); }); actions.append(open);
-      if (['pending','approved'].includes(item.review_state) && !item.checks?.passed && !['done','cancelled','expired'].includes(item.state)) action('Run next snapshot check', 'check', null);
+      if (['pending','approved'].includes(item.review_state) && !item.checks?.static_passed && !item.checks?.passed && !['done','cancelled','expired'].includes(item.state)) action('Run next snapshot check', 'check', null);
+      if (data.mission_capsules_supported && item.required_checks?.some(check => ['python_unittest','npm_test','node_syntax'].includes(check)) && ['pending','approved'].includes(item.review_state) && !['done','cancelled','expired'].includes(item.state)) action('Run tests', 'tests', 'Execute one selected check in an offline, resource-limited Docker capsule? Production is unchanged. This can take up to 90 seconds; an interrupted request is not a pass.');
       if (['pending','approved','rejected'].includes(item.review_state) && !['cancelled','expired','done'].includes(item.state)) action('Return for revisions', 'return', 'Withdraw this exact review and any approval? The agent must create a new workspace; old approval cannot be reused.');
     }
     if (item.state === 'verifying') {
@@ -491,7 +504,7 @@
     const criteria = $('task-criteria').value.split('\n').map(value => value.trim()).filter(Boolean);
     if (!criteria.length || criteria.length > 8 || criteria.some(value => value.length > 300)) { notice('Use 1–8 acceptance criteria, at most 300 characters each.'); return; }
     taskRequest('create', {agent_id:$('task-agent').value.trim(), project_path:$('task-project').value.trim(), title:$('task-title').value.trim(), goal:$('task-goal').value.trim(), acceptance_criteria:criteria,
-      required_checks:[...$('task-check-options').querySelectorAll('input:checked')].map(input => input.value)}, true);
+      required_checks:[...$('task-check-options').querySelectorAll('input:checked'), ...$('task-test-options').querySelectorAll('input:checked')].map(input => input.value)}, true);
   });
   const finishedStates = new Set(['completed','failed','rolled_back','expired','cancelled','uncertain']);
   function renderOperations(data) {

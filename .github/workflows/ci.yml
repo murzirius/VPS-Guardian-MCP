@@ -24,6 +24,10 @@ jobs:
           sudo /var/lib/guardian-gateway-ci/venv/bin/pip install .
       - name: Verify forced command, account identity, project scope and live revocation
         run: sudo env GITHUB_ACTIONS=true VPS_GUARDIAN_GATEWAY_INTEGRATION=1 /var/lib/guardian-gateway-ci/venv/bin/python "$GITHUB_WORKSPACE/tests/test_gateway_integration.py"
+      - name: Preload test image on the disposable CI runner
+        run: sudo docker pull python:3.12-alpine
+      - name: Verify real offline Mission capsule and stale-input refusal
+        run: sudo env GITHUB_ACTIONS=true VPS_GUARDIAN_CAPSULE_INTEGRATION=1 /var/lib/guardian-gateway-ci/venv/bin/python "$GITHUB_WORKSPACE/tests/test_mission_capsule_integration.py"
 
   test:
     runs-on: ubuntu-latest

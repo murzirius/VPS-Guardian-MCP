@@ -10,6 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.37.0] - 2026-10-13
+
+### Added
+- Operator-only Mission capsules for selected Python unittest, npm test and Node syntax checks, with English assignment options, Run tests, compact status and expandable bounded test details.
+- Required-test gates on linked approval/apply. Evidence binds the immutable review, every eligible copied baseline/candidate input, the pinned local image ID and isolation recipe; changed inputs/runtime invalidate passes.
+- Disposable-runner real Docker integration coverage for candidate execution, UID, network, read-only source, omitted secrets/environment and stale-input refusal.
+
+### Security and limits
+- Uses existing offline unprivileged Docker limits, a bounded root-protected UTF-8 copy, explicit local images and weak-host preflight guards. No project execution on the host, image/dependency download or new worker permissions.
+- Empty/all-skipped unittest suites, missing runtime, failed/timed-out/interrupted runs and uncertain container cleanup never pass. Test output remains operator-private; worker feeds receive compact status only.
+- Capsule copies use a private host parent while mounting only its child; this also protects legacy Project Patch capsule copies from unrelated local accounts. Production remains unchanged until a separate operator apply.
+
 ## [0.36.0] - 2026-10-10
 
 ### Added
